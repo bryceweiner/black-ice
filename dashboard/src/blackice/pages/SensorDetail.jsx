@@ -37,7 +37,20 @@ export default function SensorDetail() {
   useLive("alarm_state", load);
   useLive("sensor_state", (p) => p?.sensor_id === id && load());
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
+  // A bad id is reachable now that this is a URL -- a stale bookmark, a
+  // removed device -- so the error state needs a way out of it.
+  if (error) {
+    return (
+      <Card className="mb-0">
+        <CardBody>
+          <div className="alert alert-danger">{error}</div>
+          <Link to="/sensors" className="btn btn-link p-0 d-inline-flex align-items-center gap-1">
+            <ChevronLeft size={15} /> All sensors
+          </Link>
+        </CardBody>
+      </Card>
+    );
+  }
   if (!sensor) return null;
 
   const widgets = sensor.descriptor?.widgets ?? [];

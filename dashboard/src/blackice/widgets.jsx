@@ -4,15 +4,20 @@
 // Adding a widget type is one entry here plus one component.
 
 import React, { useEffect, useState } from "react";
-import { Badge, Card, CardBody, CardHeader, Col, Spinner, Table } from "reactstrap";
+import { Card, CardBody, CardHeader, Col, Spinner, Table } from "reactstrap";
 import ReactApexChart from "react-apexcharts";
 import { AlertTriangle } from "react-feather";
 import { api } from "./api";
+import { Pill } from "./ui";
+import { CHART, SENSOR_STATE } from "./tokens";
 
 const CHART_BASE = {
   chart: { toolbar: { show: false }, fontFamily: "inherit" },
+  colors: [CHART.series],
   dataLabels: { enabled: false },
-  grid: { borderColor: "rgba(128,128,128,.15)" },
+  grid: { borderColor: CHART.grid },
+  xaxis: { labels: { style: { colors: CHART.axis, fontSize: "11px" } } },
+  yaxis: { labels: { style: { colors: CHART.axis, fontSize: "11px" } } },
   tooltip: { theme: "dark" },
 };
 
@@ -128,9 +133,10 @@ function LogList({ data }) {
 
 function Status({ data, props }) {
   const state = data?.state ?? props?.state ?? "unknown";
-  const tone = { online: "success", healthy: "success", offline: "danger",
-                 unhealthy: "danger", degraded: "warning" }[state] ?? "secondary";
-  return <Badge color={tone} className="text-uppercase">{state}</Badge>;
+  const color = { online: "#22c55e", healthy: "#22c55e", offline: SENSOR_STATE.offline,
+                  unhealthy: SENSOR_STATE.offline, degraded: "#facc15" }[state]
+                ?? SENSOR_STATE.unknown;
+  return <Pill color={color}>{String(state).toUpperCase()}</Pill>;
 }
 
 function ImageWidget({ data, props }) {
