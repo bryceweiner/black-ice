@@ -100,6 +100,42 @@ reaches all of them -- and keeps the JSON-lines latency file it writes. Routine
 per-turn chatter (`floor_set`, `transition`, `speak_entry`) drops to DEBUG;
 `vad_load_error` and friends are ERROR.
 
+## The daily self-review
+
+Once every `RSI_REVIEW_HOURS` the primary model reads back what happened --
+triage outcomes, escalations, and your verdicts on them -- and may propose
+edits to the triage prompt and to its own system prompt. Run it by hand with
+`uv run blackice review`.
+
+Nothing goes live because the model liked it. A candidate is stored as an
+inactive version, then replayed over a golden set built from events *you have
+judged*; it must agree with you at least as often as the prompt it would
+replace. Only then does `RSI_SELF_EDIT_ENABLED` decide whether it activates or
+waits in the review queue. Below `RSI_GOLDEN_SET_MIN` judged events the gate
+refuses to rule at all, because it cannot tell two prompts apart on noise.
+
+Every version keeps its parent, rationale, author and diff, and
+`promptstore.rollback()` returns to the newest *human*-authored version rather
+than stepping back one edit at a time.
+
+**This is the riskiest part of the system.** A prompt that quietly stops
+escalating is indistinguishable from a quiet week. The gate, the minimum
+golden set and the default-off activation are what make it acceptable; keep
+`RSI_SELF_EDIT_ENABLED=false` until you have judged enough escalations for the
+gate to mean something.
+
+## Tests
+
+```bash
+uv run pytest              # unit and service tests, scripted models
+uv run pytest -m integration   # the real models in LM Studio, slow
+```
+
+The integration tests cover the parts scripted clients cannot: that the small
+model actually escalates a break-in and absorbs routine motion, that it answers
+without a thinking block, and that the primary model produces a usable review
+of its own prompts.
+
 ## Two rules worth knowing
 
 **Trust is split by origin.** Text you type or say is a command channel: a
@@ -115,7 +151,3 @@ write persistent instructions into the assistant's long-term memory.
 
 ## Tests
 
-```bash
-uv run pytest -q      # 120 tests
-uv run ruff check .
-```
