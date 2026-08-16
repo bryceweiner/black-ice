@@ -33,6 +33,19 @@ def text_part(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text}
 
 
+# Qwen3-family models emit a <think> block before answering. LM Studio ignores
+# `enable_thinking`, `reasoning_effort` and a `/no_think` marker -- all three
+# were measured still producing full reasoning. Prefilling an already-closed
+# block starts the model in its answer instead, which is ~20x faster for a
+# one-word classification and is the difference between a reply and an empty
+# string when max_tokens is small.
+NO_THINK_PREFILL = "<think>\n\n</think>\n\n"
+
+
+def suppress_thinking(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [*messages, {"role": "assistant", "content": NO_THINK_PREFILL}]
+
+
 def message_text(message: dict[str, Any]) -> str:
     """The assistant's text.
 
@@ -101,10 +114,11 @@ class LMStudioClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        no_think: bool = False,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": model or get_settings().model_primary,
-            "messages": messages,
+            "messages": suppress_thinking(messages) if no_think else messages,
             "temperature": temperature,
         }
         if tools:

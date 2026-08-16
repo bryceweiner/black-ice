@@ -153,7 +153,8 @@ class FakeClient:
         self.calls.append((messages, kw))
         if self.fail == len(self.calls):
             raise RuntimeError("model unavailable")
-        if kw.get("max_tokens") == 8:
+        # Identified by model, not by a magic max_tokens value.
+        if kw.get("model") == "test-triage":
             return {"content": self.tier2}
         return {"content": self.tier3 or
                 '{"threat_level":"high","classification":"Unknown person",'
@@ -232,7 +233,7 @@ async def test_tier3_reads_json_from_reasoning_content(sensor):
     class ReasoningClient(FakeClient):
         async def chat(self, messages, **kw):
             self.calls.append((messages, kw))
-            if kw.get("max_tokens") == 8:
+            if kw.get("model") == "test-triage":
                 return {"content": "", "reasoning_content": "notable"}
             return {"content": "", "reasoning_content":
                     '{"threat_level":"elevated","classification":"Unfamiliar face",'
@@ -243,3 +244,39 @@ async def test_tier3_reads_json_from_reasoning_content(sensor):
     esc = await db.fetchone("SELECT * FROM escalations")
     assert esc["classification"] == "Unfamiliar face"
     assert esc["suggested_action"] == "Review footage."
+
+
+async def test_triage_suppresses_thinking(sensor):
+    """A thinking model spends a small max_tokens budget entirely on reasoning
+    and returns empty content, which silently escalated every event."""
+    c = FakeClient(tier2="benign")
+    await TriagePipeline(c).process(await make_event())
+
+    _, kwargs = c.calls[0]
+    assert kwargs["no_think"] is True
+    assert kwargs["max_tokens"] >= 16
+
+
+async def test_thinking_suppression_can_be_disabled(sensor, monkeypatch):
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("TRIAGE_NO_THINK", "false")
+    get_settings.cache_clear()
+    try:
+        c = FakeClient(tier2="benign")
+        await TriagePipeline(c).process(await make_event())
+        assert c.calls[0][1]["no_think"] is False
+    finally:
+        get_settings.cache_clear()
+
+
+def test_prefill_starts_the_model_in_its_answer():
+    from blackice.llm.client import NO_THINK_PREFILL, suppress_thinking
+
+    out = suppress_thinking([{"role": "user", "content": "hi"}])
+    assert out[-1] == {"role": "assistant", "content": NO_THINK_PREFILL}
+    assert "</think>" in NO_THINK_PREFILL
+    # The caller's list must not be mutated.
+    original = [{"role": "user", "content": "hi"}]
+    suppress_thinking(original)
+    assert len(original) == 1

@@ -30,7 +30,10 @@ class Settings(BaseSettings):
 
     lmstudio_base_url: str = "http://localhost:1234/v1"
     model_primary: str = "qwen3.8-27b-abliterated-mlx"
-    model_triage: str = "qwen3.5-9b"
+    model_triage: str = "qwen3.5-4b-mlx"
+    # Triage wants a verdict, not deliberation. LM Studio ignores the
+    # usual thinking switches, so this prefills a closed <think> block.
+    triage_no_think: bool = True
 
     data_dir: Path = Path("data")
 

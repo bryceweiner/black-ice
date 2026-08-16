@@ -105,7 +105,12 @@ class TriagePipeline:
                     {"role": "system", "content": TIER2_PROMPT},
                     user_message(_describe(event), _images(event)),
                 ],
-                model=s.model_triage, temperature=0.0, max_tokens=8,
+                model=s.model_triage, temperature=0.0,
+                # Enough for the word plus punctuation. With thinking left on
+                # the whole budget goes to reasoning and content comes back
+                # empty, which silently escalated every event to the 27B.
+                max_tokens=16,
+                no_think=s.triage_no_think,
             )
         except Exception:
             log.exception("tier 2 failed; escalating to be safe")
