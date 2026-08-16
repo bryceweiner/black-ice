@@ -17,6 +17,7 @@ from ..plugins.registry import registry
 from ..rsi.scheduler import scheduler as review_scheduler
 from ..services import events
 from ..triage import pipeline as triage
+from ..voice.announce import Announcer
 from ..voice.voice2_backend import Voice2Backend
 from . import auth
 from .routes import router
@@ -24,6 +25,40 @@ from .static import mount as mount_static
 from .ws import hub, websocket_endpoint
 
 log = logging.getLogger("blackice")
+
+
+async def start_voice() -> tuple[Voice2Backend | None, Announcer | None]:
+    """Bring up the speaker, and the announcer that speaks without being asked.
+
+    This process runs both the reminder scheduler and the only speaker, so a
+    reminder that comes due becomes audible here or nowhere. Returns
+    `(None, None)` when voice is switched off or fails to start: it is an
+    accessory, and the dashboard must still come up without it.
+    """
+    if not get_settings().voice_enabled:
+        return None, None
+
+    voice = Voice2Backend()
+    try:
+        await voice.start()
+    except Exception as exc:
+        log.error("voice did not start: %s", exc)
+        return None, None
+
+    announcer = Announcer(voice)
+    await announcer.start()
+    return voice, announcer
+
+
+async def stop_voice(voice: Voice2Backend | None, announcer: Announcer | None) -> None:
+    """Shutdown must not raise: the rest of the teardown still has to run."""
+    for name, component in (("announcer", announcer), ("voice", voice)):
+        if component is None:
+            continue
+        try:
+            await component.stop()
+        except Exception:
+            log.exception("%s did not stop cleanly", name)
 
 
 @asynccontextmanager
@@ -45,17 +80,7 @@ async def lifespan(app: FastAPI):
 
     await review_scheduler.start()
 
-    voice = None
-    if s.voice_enabled:
-        voice = Voice2Backend()
-        try:
-            await voice.start()
-        except Exception as exc:
-            # Voice is an accessory; the dashboard must still come up without it.
-            log.error("voice did not start: %s", exc)
-            await review_scheduler.start()
-
-    voice = None
+    voice, announcer = await start_voice()
 
     log.info(
         "black-ice up: assistant=%s plugins=%s tools=%d voice=%s",
@@ -63,12 +88,12 @@ async def lifespan(app: FastAPI):
         bool(voice),
     )
     app.state.voice = voice
+    app.state.announcer = announcer
     try:
         yield
     finally:
         await review_scheduler.stop()
-        if voice is not None:
-            await voice.stop()
+        await stop_voice(voice, announcer)
         await registry.stop_all()
         await db.close()
 

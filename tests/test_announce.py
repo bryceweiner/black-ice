@@ -6,6 +6,7 @@ import pytest
 from helpers import ScriptedClient, reply
 
 from blackice import db
+from blackice.config import get_settings
 from blackice.models import Event
 from blackice.services import events
 from blackice.voice.announce import Announcer, fallback
@@ -22,11 +23,21 @@ PAYLOAD = {
 
 
 class FakeBackend:
-    """A speaker that only remembers what it was told to say."""
+    """A speaker that only remembers what it was told to say.
+
+    Stands in for Voice2Backend, so it has to start and stop like one.
+    """
 
     def __init__(self, fail: bool = False) -> None:
         self.said: list[str] = []
         self.fail = fail
+        self.running = False
+
+    async def start(self) -> None:
+        self.running = True
+
+    async def stop(self) -> None:
+        self.running = False
 
     async def say(self, text: str) -> None:
         if self.fail:
@@ -140,6 +151,31 @@ async def test_a_silent_model_still_produces_an_announcement(data_dir):
     assert await a.poll_once() == ["It's 7:00 AM. You asked me to remind you: call Mum."]
 
 
+async def test_the_models_thinking_is_never_read_aloud(data_dir):
+    """Qwen3 reasoning fills `reasoning_content` and leaves `content` empty.
+
+    Read literally that is an announcement of "Thinking Process: 1. Analyze the
+    request..." down the speaker, which is what happened the first time this
+    ran against a real model.
+    """
+    class Thinking:
+        kw: dict = {}
+
+        async def chat(self, messages, **kw):
+            Thinking.kw = kw
+            return {
+                "role": "assistant", "content": "",
+                "reasoning_content": "Thinking Process:\n1. Analyze the request...",
+            }
+
+    a = Announcer(FakeBackend(), Thinking())
+    await a.start()
+    await record_reminder()
+
+    assert await a.poll_once() == [fallback(PAYLOAD)]
+    assert Thinking.kw["no_think"] is True  # and we asked it not to think at all
+
+
 async def test_an_empty_reply_falls_back_rather_than_saying_nothing(data_dir):
     a = Announcer(FakeBackend(), ScriptedClient(reply("   ")))
     await a.start()
@@ -204,6 +240,66 @@ async def test_a_reminder_set_by_voice_is_announced_when_it_comes_due(data_dir):
     finally:
         await a.stop()
         await reg.stop_all()
+
+
+# --- startup wiring --------------------------------------------------------
+#
+# `start.sh` runs everything in one `blackice serve` process, so this is the
+# process that has both the reminder scheduler and the speaker. If these fail,
+# reminders fire silently: the event is recorded and nobody says it.
+
+async def test_serving_with_voice_starts_an_announcer(data_dir, monkeypatch):
+    from blackice.api import app as api_app
+
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(api_app, "Voice2Backend", FakeBackend)
+
+    voice, announcer = await api_app.start_voice()
+    try:
+        assert voice is not None
+        assert announcer is not None and announcer.backend is voice
+
+        announcer.client = ScriptedClient(reply("It's 7 AM. Time to call Mum."))
+        await record_reminder()
+        assert await announcer.poll_once() == ["It's 7 AM. Time to call Mum."]
+        assert voice.said == ["It's 7 AM. Time to call Mum."]
+    finally:
+        await api_app.stop_voice(voice, announcer)
+
+
+async def test_serving_without_voice_starts_nothing(data_dir, monkeypatch):
+    from blackice.api import app as api_app
+
+    monkeypatch.setenv("VOICE_ENABLED", "false")
+    get_settings.cache_clear()
+
+    assert await api_app.start_voice() == (None, None)
+
+
+async def test_a_speaker_that_will_not_start_does_not_stop_the_api(data_dir, monkeypatch):
+    from blackice.api import app as api_app
+
+    class Unstartable(FakeBackend):
+        async def start(self):
+            raise RuntimeError("no microphone")
+
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(api_app, "Voice2Backend", Unstartable)
+
+    assert await api_app.start_voice() == (None, None)
+
+
+async def test_shutdown_survives_a_component_that_throws(data_dir, monkeypatch):
+    from blackice.api import app as api_app
+
+    class Ungraceful(FakeBackend):
+        async def stop(self):
+            raise RuntimeError("the audio thread is wedged")
+
+    # Must not raise: registry and database teardown still have to run.
+    await api_app.stop_voice(Ungraceful(), None)
 
 
 def test_the_plain_wording_covers_a_reminder_with_no_reason():

@@ -21,7 +21,6 @@ from .. import db
 from ..config import get_settings
 from ..llm import prompts
 from ..llm.client import client as default_client
-from ..llm.client import message_text
 
 log = logging.getLogger("blackice.announce")
 
@@ -125,8 +124,12 @@ class Announcer:
                 model=s.model_voice or None,
                 temperature=0.3,
                 max_tokens=120,
+                # Without this the Qwen3 reasoning block eats the token budget
+                # and `content` comes back empty, leaving message_text() to
+                # return the model's thinking — which then gets read aloud.
+                no_think=True,
             )
-            if text := message_text(message).strip():
+            if text := (message.get("content") or "").strip():
                 return text
             log.warning("empty announcement from the model; using the plain wording")
         except Exception:
