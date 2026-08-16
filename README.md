@@ -81,6 +81,10 @@ Setup notes, each of which cost an afternoon:
   `VOICE_FILLER_DELAY_S` (3s), a short phrase is spoken so a pause does not read
   as "it never heard me". It reuses the in-flight turn id -- starting a new one
   would make the real answer stale and playback would discard it.
+- **Cues only confirm being addressed** (`VOICE_CUE_MODE=wake`). voice2 chimes
+  on every detected utterance and again when it starts thinking, both of which
+  happen before anyone knows the speech was meant for it. `all` restores that,
+  `off` leaves only the failure buzz.
 - **Spacebar interrupt is off** (`VOICE_KEYBOARD_INTERRUPT`). voice2's keyboard
   worker calls `tty.setraw()`, which clears ISIG so Ctrl-C never becomes SIGINT,
   and OPOST so console output walks diagonally down the screen. Barge-in by

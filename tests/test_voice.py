@@ -570,3 +570,103 @@ async def test_a_failed_ask_buzzes(data_dir, monkeypatch):
     reply = await asyncio.to_thread(backend._ask, "Ice, status?")
     assert "went wrong" in reply
     assert rung == ["buzz"]
+
+
+# --- audio cues ------------------------------------------------------------
+
+class FakeCues:
+    def __init__(self):
+        self.rung = []
+
+    def listening(self): self.rung.append("listening")
+    def thinking(self): self.rung.append("thinking")
+    def speaking(self): self.rung.append("speaking")
+    def interrupted(self): self.rung.append("interrupted")
+    def error(self): self.rung.append("error")
+    def _play(self, samples): self.rung.append("play")
+    def close(self): self.rung.append("close")
+
+
+def test_wake_mode_silences_the_per_utterance_chimes():
+    """voice2 chimes on every detected utterance and again on thinking, both
+    before anyone knows the speech was for us."""
+    from blackice.voice.cues import GatedCues
+
+    inner = FakeCues()
+    cues = GatedCues(inner, "wake")
+    cues.listening()
+    cues.thinking()
+    cues.speaking()
+    assert inner.rung == []
+
+    cues.acknowledge()
+    assert inner.rung == ["listening"]
+
+
+def test_failures_and_interruptions_always_sound():
+    from blackice.voice.cues import GatedCues
+
+    inner = FakeCues()
+    cues = GatedCues(inner, "wake")
+    cues.error()
+    cues.interrupted()
+    assert inner.rung == ["error", "interrupted"]
+
+
+def test_off_mode_keeps_only_the_failure_cue():
+    from blackice.voice.cues import GatedCues
+
+    inner = FakeCues()
+    cues = GatedCues(inner, "off")
+    for call in (cues.listening, cues.thinking, cues.speaking,
+                 cues.interrupted, cues.acknowledge):
+        call()
+    assert inner.rung == []
+    cues.error()
+    assert inner.rung == ["error"]
+
+
+def test_all_mode_restores_voice2_behaviour():
+    from blackice.voice.cues import GatedCues
+
+    inner = FakeCues()
+    cues = GatedCues(inner, "all")
+    cues.listening()
+    cues.thinking()
+    cues.speaking()
+    assert inner.rung == ["listening", "thinking", "speaking"]
+
+
+def test_unknown_mode_falls_back_to_wake():
+    from blackice.voice.cues import GatedCues
+
+    assert GatedCues(FakeCues(), "nonsense").mode == "wake"
+
+
+def test_filler_playback_still_passes_through():
+    """The filler rides the cue stream, so the proxy must forward _play."""
+    from blackice.voice.cues import GatedCues
+
+    inner = FakeCues()
+    GatedCues(inner, "wake")._play(object())
+    assert inner.rung == ["play"]
+
+
+async def test_acknowledge_fires_only_when_addressed(data_dir, monkeypatch):
+    monkeypatch.setattr(guard.guard_model, "score", lambda t: 0.0)
+    from blackice.llm.harness import Harness
+
+    rung = []
+
+    class Ack(VoiceGateway):
+        async def start(self): ...
+        async def stop(self): ...
+        def on_addressed(self): rung.append("ack")
+
+    gw = Ack(Harness(ToolRegistry(), ScriptedClient(reply("ok"), reply("ok"))))
+
+    await gw.respond("the television is talking about something")
+    assert rung == [], "must not acknowledge speech that was not for us"
+
+    await gw.respond("Ice, what is happening")
+    assert rung == ["ack"]

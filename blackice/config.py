@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     # voice2's spacebar interrupt puts the tty in raw mode, which breaks
     # Ctrl-C and console formatting. Barge-in by voice works regardless.
     voice_keyboard_interrupt: bool = False
+    # wake: one chime once the wake word matches (default).
+    # all: voice2's chime-at-everything. off: failures only.
+    voice_cue_mode: str = "wake"
     # Voice answers are spoken, so latency matters more than depth.
     # Blank uses MODEL_PRIMARY.
     model_voice: str = ""

@@ -95,6 +95,9 @@ class VoiceGateway(ABC):
 
     # --- hooks -------------------------------------------------------------
 
+    def on_addressed(self) -> None:  # noqa: B027 - optional hook
+        """The wake word matched. Fired before any slow work begins."""
+
     def on_thinking_start(self) -> None:  # noqa: B027 - optional hook
         """Called once the utterance is ours and the model call begins.
 
@@ -118,6 +121,10 @@ class VoiceGateway(ABC):
             log.info("heard but not addressed to me: %r", normalized[:80])
             await self._log(transcript, normalized, woke=False, reply=None)
             return Heard(transcript, normalized, False, None)
+
+        # Acknowledge immediately: this is the only confirmation the speaker
+        # gets that they were understood as addressing us.
+        self.on_addressed()
 
         spoken = self.strip_wake_word(normalized)
         checked = await guard.inspect(spoken, trust=Trust.USER, channel="voice")

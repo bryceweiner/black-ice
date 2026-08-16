@@ -18,6 +18,7 @@ from typing import Any
 
 from ..config import get_settings
 from . import voice2_logging
+from .cues import GatedCues
 from .gateway import VoiceGateway
 
 log = logging.getLogger("blackice.voice.voice2")
@@ -164,6 +165,9 @@ class Voice2Backend(VoiceGateway):
 
         self._loop = asyncio.get_running_loop()
         self.engine = VoiceEngine(self.build_config(), self._ask)
+        # Wrap before engine.start(): the workers are handed this object then,
+        # and voice2 chimes on every utterance whether or not it was for us.
+        self.engine.cues = GatedCues(self.engine.cues, get_settings().voice_cue_mode)
         # Model loading is heavy and blocking; keep it off the event loop.
         await asyncio.to_thread(self._load_models_quietly)
         await asyncio.to_thread(self.engine.start)
@@ -257,6 +261,12 @@ class Voice2Backend(VoiceGateway):
             cues._play(np.concatenate(chunks))
         except Exception:
             log.exception("could not speak aside %r", text[:40])
+
+    def on_addressed(self) -> None:
+        cues = getattr(self.engine, "cues", None)
+        if cues is not None:
+            with contextlib.suppress(Exception):
+                cues.acknowledge()
 
     def buzz(self) -> None:
         """Audible failure signal, on the cue stream so it always gets out."""
