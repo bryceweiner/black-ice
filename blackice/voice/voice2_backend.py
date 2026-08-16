@@ -113,12 +113,17 @@ class Voice2Backend(VoiceGateway):
     def _ask(self, text: str) -> str:
         """Sync bridge called from voice2's worker thread."""
         if self._loop is None:
+            self.buzz()
             return "The assistant is not running."
         try:
             future = asyncio.run_coroutine_threadsafe(self.respond(text), self._loop)
             heard = future.result(timeout=ASK_TIMEOUT_S)
         except Exception as exc:
+            # Buzz as well as speak: a failure can leave the turn in a state
+            # where the spoken reply is refused, and silence looks identical to
+            # not being heard.
             log.exception("voice ask failed")
+            self.buzz()
             return f"Something went wrong handling that: {exc}"
         # Not addressed: stay silent rather than talking over the room.
         return heard.reply or ""
@@ -227,7 +232,38 @@ class Voice2Backend(VoiceGateway):
     def _speak_filler(self) -> None:
         phrase = self._pick_filler()
         log.debug("filler: %s", phrase)
-        self._speak_now(phrase, new_turn=False)
+        self._speak_aside(phrase)
+
+    def _speak_aside(self, text: str) -> None:
+        """Speak without touching the turn state machine.
+
+        The playback worker is not usable here. A turn gets exactly one
+        THINKING -> SPEAKING transition; spending it on a filler drops the
+        machine back to LISTENING, and the real answer is then refused with
+        `invalid_transition` and never spoken at all. voice2's cue player owns
+        a separate output stream for precisely this kind of aside.
+        """
+        engine = self.engine
+        cues = getattr(engine, "cues", None)
+        tts = getattr(engine, "_tts", None)
+        if engine is None or cues is None or tts is None:
+            return
+        try:
+            import numpy as np
+
+            chunks = [c for c in tts.synthesize(text) if len(c)]
+            if not chunks:
+                return
+            cues._play(np.concatenate(chunks))
+        except Exception:
+            log.exception("could not speak aside %r", text[:40])
+
+    def buzz(self) -> None:
+        """Audible failure signal, on the cue stream so it always gets out."""
+        cues = getattr(self.engine, "cues", None)
+        if cues is not None:
+            with contextlib.suppress(Exception):
+                cues.error()
 
     def _speak_now(self, text: str, *, new_turn: bool) -> None:
         """Push text straight to playback. Safe to call from any thread.

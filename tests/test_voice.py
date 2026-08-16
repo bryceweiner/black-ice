@@ -384,7 +384,7 @@ def _backend_with_fake_engine(monkeypatch, delay="0.05"):
     backend = Voice2Backend()
     spoken = []
     backend.engine = types.SimpleNamespace()
-    backend._speak_now = lambda text, *, new_turn: spoken.append((text, new_turn))
+    backend._speak_aside = lambda text: spoken.append(text)
     return backend, spoken
 
 
@@ -396,12 +396,12 @@ async def test_filler_is_spoken_when_the_model_is_slow(data_dir, monkeypatch):
     await asyncio.sleep(0.2)
     backend.on_thinking_end()
 
+    from blackice.voice.voice2_backend import FILLERS
+
     assert len(spoken) == 1
-    phrase, new_turn = spoken[0]
-    assert phrase in __import__("blackice.voice.voice2_backend", fromlist=["FILLERS"]).FILLERS
+    phrase = spoken[0]
+    assert phrase in FILLERS
     assert 2 <= len(phrase.split()) <= 6
-    # Must reuse the in-flight turn: a new turn would make the real answer stale.
-    assert new_turn is False
 
 
 async def test_no_filler_when_the_model_is_quick(data_dir, monkeypatch):
@@ -498,3 +498,75 @@ def test_asr_model_is_configurable(monkeypatch):
         assert Voice2Backend().build_config().asr.model_size == "medium.en"
     finally:
         get_settings.cache_clear()
+
+
+def test_filler_never_uses_the_playback_worker(data_dir, monkeypatch):
+    """A turn gets one THINKING -> SPEAKING transition. Spending it on a filler
+    returns the machine to LISTENING and the real answer is then refused with
+    invalid_transition -- the reply is lost entirely."""
+    import asyncio
+    import types
+
+    monkeypatch.setenv("VOICE_FILLER_DELAY_S", "0.05")
+    from blackice.config import get_settings
+
+    get_settings.cache_clear()
+
+    played, submitted = [], []
+    backend = Voice2Backend()
+    backend.engine = types.SimpleNamespace(
+        cues=types.SimpleNamespace(_play=played.append, error=lambda: played.append("BUZZ")),
+        _tts=types.SimpleNamespace(synthesize=lambda text: [_pcm(text)]),
+        _playback_worker=types.SimpleNamespace(
+            submit=lambda *a, **k: submitted.append(a)),
+        ctrl=types.SimpleNamespace(current_turn=lambda: 1, start_new_turn=lambda: 2),
+    )
+
+    async def go():
+        backend.on_thinking_start()
+        await asyncio.sleep(0.2)
+        backend.on_thinking_end()
+
+    asyncio.run(go())
+    assert len(played) == 1, "the filler should go out on the cue stream"
+    assert submitted == [], "the filler must not touch the playback worker"
+
+
+def _pcm(text):
+    import numpy as np
+
+    return np.zeros(16, dtype=np.float32)
+
+
+def test_buzz_uses_the_cue_stream(data_dir):
+    import types
+
+    rung = []
+    backend = Voice2Backend()
+    backend.engine = types.SimpleNamespace(
+        cues=types.SimpleNamespace(error=lambda: rung.append("buzz")))
+    backend.buzz()
+    assert rung == ["buzz"]
+
+
+def test_buzz_is_safe_without_an_engine(data_dir):
+    Voice2Backend().buzz()   # must not raise
+
+
+async def test_a_failed_ask_buzzes(data_dir, monkeypatch):
+    import asyncio
+    import types
+
+    rung = []
+    backend = Voice2Backend()
+    backend.engine = types.SimpleNamespace(
+        cues=types.SimpleNamespace(error=lambda: rung.append("buzz")))
+    backend._loop = asyncio.get_running_loop()
+
+    async def boom(text):
+        raise RuntimeError("model down")
+
+    backend.respond = boom
+    reply = await asyncio.to_thread(backend._ask, "Ice, status?")
+    assert "went wrong" in reply
+    assert rung == ["buzz"]
