@@ -2,6 +2,7 @@ import React, { Fragment, useState, useEffect, useLayoutEffect } from "react";
 import { MENUITEMS } from "./menu";
 import { useSelector } from "react-redux";
 import { Link } from "react-router-dom";
+import { ChevronLeft, ChevronRight } from "react-feather";
 
 const useWindowSize = (wrapper) => {
   const [size, setSize] = useState([0, 0]);
@@ -185,7 +186,7 @@ const Sidebar = (props) => {
                 : scrollToLeft
             }
           >
-            <i className="fa fa-angle-left"></i>
+            <ChevronLeft size={16} />
           </li>
           {MENUITEMS.map((menuItem, i) => (
             <li className={`${menuItem.active ? "open" : ""}`} key={i}>
@@ -268,7 +269,7 @@ const Sidebar = (props) => {
                 : scrollToRight
             }
           >
-            <i className="fa fa-angle-right"></i>
+            <ChevronRight size={16} />
           </li>
         </ul>
       </div>

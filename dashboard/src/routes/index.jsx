@@ -15,7 +15,8 @@ const MainRoutes = () => {
   const check = () =>
     api
       .health()
-      .then((h) => api.get("/me").then((me) => setSession({ status: "in", assistant: me.assistant }))
+      .then((h) => api.get("/me")
+        .then((me) => setSession({ status: "in", assistant: me.assistant, username: me.username }))
         .catch(() => setSession({ status: "out", assistant: h.assistant })))
       .catch(() => setSession({ status: "out", assistant: "Ice" }));
 
@@ -29,8 +30,8 @@ const MainRoutes = () => {
   return (
     <Routes>
       <Route path="/" element={<PrivateRoute />}>
-        <Route element={<AppLayout assistant={session.assistant} />}>
-          <Route path="" element={<Navigate to="/escalations" />} />
+        <Route element={<AppLayout assistant={session.assistant} username={session.username} />}>
+          <Route path="" element={<Navigate to="/escalations" replace />} />
           {routes.map(({ path, Component }, i) => (
             <Route path={path} element={Component} key={i} />
           ))}

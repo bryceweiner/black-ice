@@ -1,444 +1,387 @@
-/* eslint-disable no-unused-vars */
-import React, { useState, useEffect, useCallback, useLayoutEffect } from "react";
-import Bookmark from "./bookmark";
-import man from "/assets/images/dashboard/user.png";
-import { AlignCenter, FileText, Activity, User, Clipboard, Anchor, Settings, LogOut, ThumbsUp, MessageCircle, MessageSquare, Maximize, Search, MoreHorizontal } from "react-feather";
-import { Row, Col, Form, FormGroup, Button } from "reactstrap";
-import { MENUITEMS } from "../sidebar/menu";
+// The header carries the four things an operator wants without clicking:
+// whether the feed is live, whether the house is armed, what is happening
+// (search), and who is signed in. Everything the template shipped here --
+// the demo notifications, the app-grid droplet, the bookmark bar, the fake
+// profile -- pointed at routes that do not exist and is gone.
+
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AlignCenter, LogOut, Maximize, Moon, Search, Sun, User } from "react-feather";
+import { Badge, Input, Spinner } from "reactstrap";
 import { Link, useNavigate } from "react-router-dom";
-import { useSelector } from "react-redux";
-import logoDark from "/assets/images/logo/logo.png";
-import logoLight from "/assets/images/logo/light-logo.png";
+import { useDispatch, useSelector } from "react-redux";
+import { ADD_COLOR } from "../../../redux/customizer/CustomizerSlice";
+import Logo from "../../../blackice/Logo";
+import { api } from "../../../blackice/api";
+import { useConnected, useLive } from "../../../blackice/live";
 
-const Header = (props) => {
-  const history = useNavigate();
-  const [profile, setProfile] = useState("");
-  const [name, setName] = useState("");
-  const [mainmenu, setMainMenu] = useState(MENUITEMS);
-  const [searchValue, setsearchValue] = useState("");
-  const [navmenu, setNavmenu] = useState(false);
-  const [searchinput, setSearchinput] = useState(false);
-  const [spinner, setspinner] = useState(false);
-  const [searchResult, setSearchResult] = useState(false);
-  const [searchResultEmpty, setSearchResultEmpty] = useState(false);
-  const [sidebar, setSidebar] = useState("iconsidebar-menu");
-  const [rightSidebar, setRightSidebar] = useState(true);
-  const width = useWindowSize();
-  const layoutVersion = useSelector((state) => state.customizerSlice.customizer.color.layout_version);
-  console.log("layoutVersion", layoutVersion);
-  
-  const mixLayout = useSelector((state) => state.customizerSlice.customizer.color.mix_layout)
-  const isDarkMode = layoutVersion === "dark-only" || mixLayout === "dark-only";
-  const logo = isDarkMode ? logoLight : logoDark;
+const SEARCH_DEBOUNCE_MS = 250;
 
-  const escFunction = useCallback((event) => {
-    if (event.keyCode === 27) {
-      setsearchValue("");
-    }
+function useWindowWidth() {
+  const [width, setWidth] = useState(window.innerWidth);
+  useLayoutEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
+  return width;
+}
 
-  function useWindowSize() {
-    const [size, setSize] = useState([0, 0]);
-    useLayoutEffect(() => {
-      function updateSize() {
-        setSize(window.innerWidth);
-      }
-      window.addEventListener("resize", updateSize);
-      updateSize();
-      return () => window.removeEventListener("resize", updateSize);
-    }, []);
-    return size;
-  }
+// --- pieces ----------------------------------------------------------------
 
-  useEffect(() => {
-    if (width <= 991) {
-      setSidebar("iconbar-second-close");
-      document.querySelector(".iconsidebar-menu").classList.add("iconbar-second-close");
-    } else {
-      setSidebar("iconsidebar-menu");
-      document.querySelector(".iconsidebar-menu").classList.remove("iconbar-second-close");
-    }
+function LivePill() {
+  const connected = useConnected();
+  return (
+    <span
+      className={`badge d-inline-flex align-items-center gap-1 ${
+        connected ? "bg-success" : "bg-danger"
+      }`}
+      title={connected ? "Receiving live updates" : "Disconnected -- reconnecting"}
+    >
+      <span
+        className="rounded-circle bg-white"
+        style={{ width: 6, height: 6, opacity: connected ? 1 : 0.6 }}
+      />
+      {connected ? "LIVE" : "OFFLINE"}
+    </span>
+  );
+}
 
-    setProfile(localStorage.getItem("profileURL") || man);
-    setName(localStorage.getItem("Name"));
-    document.addEventListener("keydown", escFunction, false);
+// The master arm switch. Reads real alarm state rather than a local toggle,
+// so a rule armed by voice shows up here too.
+function ArmSwitch() {
+  const [rules, setRules] = useState([]);
+  const [busy, setBusy] = useState(false);
 
-    return () => {
-      document.removeEventListener("keydown", escFunction, false);
-    };
-  }, [escFunction, width]);
+  const load = useCallback(
+    () => api.alarms().then((r) => setRules(r.rows ?? r ?? [])).catch(() => {}),
+    []
+  );
+  useEffect(() => { load(); }, [load]);
+  useLive("alarm_state", load);
 
-  const logOuts = () => {
-    localStorage.removeItem("profileURL");
-    history(`/login`);
-  };
+  const armed = rules.filter((r) => r.armed).length;
+  const all = rules.length;
+  if (!all) return null;
 
-  const handleSearchKeyword = (keyword) => {
-    keyword ? addFix() : removeFix();
-    const items = [];
-    if (keyword.length > 0) {
-      setsearchValue(keyword);
-      setspinner(true);
-      setTimeout(function () {
-        setspinner(false);
-      }, 1000);
-    } else {
-      setspinner(false);
-    }
-    mainmenu.filter((menuItems) => {
-      if (menuItems.title.toLowerCase().includes(keyword) && menuItems.type === "link") {
-        items.push(menuItems);
-      }
-      if (!menuItems.children) return false;
-      menuItems.children.filter((subItems) => {
-        if (subItems.title.toLowerCase().includes(keyword) && subItems.type === "link") {
-          subItems.icon = menuItems.icon;
-          items.push(subItems);
-        }
-        if (!subItems.children) return false;
-        subItems.children.filter((suSubItems) => {
-          if (suSubItems.title.toLowerCase().includes(keyword)) {
-            suSubItems.icon = menuItems.icon;
-            items.push(suSubItems);
-          }
-          return suSubItems;
-        });
-        return subItems;
-      });
-      checkSearchResultEmpty(items);
-      setsearchValue(items);
-      return menuItems;
-    });
-  };
-
-  const addFix = () => {
-    setSearchResult(true);
-    document.querySelector(".Typeahead-menu").classList.add("is-open");
-    document.body.classList.add("offcanvas");
-  };
-
-  const removeFix = () => {
-    setSearchResult(false);
-    setsearchValue("");
-    document.querySelector(".Typeahead-menu").classList.remove("is-open");
-    document.body.classList.remove("offcanvas");
-  };
-
-  const checkSearchResultEmpty = (items) => {
-    if (!items.length) {
-      setSearchResultEmpty(true);
-      document.querySelector(".empty-menu").classList.add("is-open");
-    } else {
-      setSearchResultEmpty(false);
-      document.querySelector(".empty-menu").classList.remove("is-open");
-    }
-  };
-  const openCloseSidebar = (sidebartoggle) => {
-    var isOpen = false;
-
-    const mainMenuUl = [...document.querySelector(".iconMenu-bar").children];
-
-    mainMenuUl.map((item) => {
-      if (item.classList.value.includes("open")) {
-        isOpen = true;
-      }
-      return item;
-    });
-
-    if (sidebartoggle === "iconsidebar-menu") {
-      setSidebar("iconbar-second-close");
-      document.querySelector(".iconsidebar-menu").classList.remove("iconbar-mainmenu-close");
-      document.querySelector(".iconsidebar-menu").classList.add("iconbar-second-close");
-    } else if (isOpen && sidebartoggle === "iconbar-second-close") {
-      setSidebar("iconsidebar-menu");
-      document.querySelector(".iconsidebar-menu").classList.remove("iconbar-second-close");
-    } else if (!isOpen && sidebartoggle === "iconbar-second-close") {
-      setSidebar("iconsidebar-menu");
-      document.querySelector(".iconsidebar-menu").classList.add("iconbar-mainmenu-close");
-      document.querySelector(".iconsidebar-menu").classList.remove("iconbar-second-close");
-    }
-  };
-
-  const showRightSidebar = () => {
-    if (rightSidebar) {
-      setRightSidebar(!rightSidebar);
-      document.querySelector(".right-sidebar").classList.add("show");
-    } else {
-      setRightSidebar(!rightSidebar);
-      document.querySelector(".right-sidebar").classList.remove("show");
-    }
-  };
-
-  //full screen function
-  const goFull = () => {
-    if ((document.fullScreenElement && document.fullScreenElement !== null) || (!document.mozFullScreen && !document.webkitIsFullScreen)) {
-      if (document.documentElement.requestFullScreen) {
-        document.documentElement.requestFullScreen();
-      } else if (document.documentElement.mozRequestFullScreen) {
-        document.documentElement.mozRequestFullScreen();
-      } else if (document.documentElement.webkitRequestFullScreen) {
-        document.documentElement.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
-      }
-    } else {
-      if (document.cancelFullScreen) {
-        document.cancelFullScreen();
-      } else if (document.mozCancelFullScreen) {
-        document.mozCancelFullScreen();
-      } else if (document.webkitCancelFullScreen) {
-        document.webkitCancelFullScreen();
-      }
-    }
-  };
-
-  const Navmenuhideandshow = () => {
-    if (navmenu) {
-      setNavmenu(!navmenu);
-      document.querySelector(".nav-menus").classList.add("open");
-    } else {
-      setNavmenu(!navmenu);
-      document.querySelector(".nav-menus").classList.remove("open");
-    }
-  };
-
-  const openCloseSearch = () => {
-    if (searchinput) {
-      setSearchinput(!searchinput);
-      document.querySelector(".Typeahead-input").classList.add("open");
-    } else {
-      setSearchinput(!searchinput);
-      document.querySelector(".Typeahead-input").classList.remove("open");
-      document.querySelector(".Typeahead-menu").classList.remove("is-open");
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await api.setAllAlarms(armed < all);
+      await load();
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div className='page-main-header'>
-      <div className='main-header-right'>
-        <div className='main-header-left text-center'>
-          <div className='logo-wrapper'>
-            <Link to={`/dashboard/default`}>
-              <img src={logo} alt='Logo' />
+    <div className="d-flex align-items-center gap-2">
+      <div className="form-check form-switch mb-0">
+        <input
+          className="form-check-input"
+          type="checkbox"
+          role="switch"
+          id="master-arm"
+          checked={armed === all}
+          disabled={busy}
+          onChange={toggle}
+          aria-label={armed === all ? "Disarm every alarm" : "Arm every alarm"}
+        />
+      </div>
+      <label htmlFor="master-arm" className="mb-0 small text-nowrap" style={{ cursor: "pointer" }}>
+        {armed === 0 ? (
+          <span className="text-muted">Disarmed</span>
+        ) : (
+          <span className={armed === all ? "text-success" : "text-warning"}>
+            Armed {armed}/{all}
+          </span>
+        )}
+      </label>
+    </div>
+  );
+}
+
+function HeaderSearch() {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const navigate = useNavigate();
+  const box = useRef(null);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) {
+      setHits(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setBusy(true);
+    const t = setTimeout(() => {
+      Promise.all([
+        api.sensors({ q: term, limit: 5 }).catch(() => ({ rows: [] })),
+        api.events({ q: term, limit: 5 }).catch(() => ({ rows: [] })),
+      ])
+        .then(([s, e]) => {
+          if (cancelled) return;
+          setHits({ sensors: s.rows ?? [], events: e.rows ?? [] });
+        })
+        .finally(() => !cancelled && setBusy(false));
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  // Click-away and Escape both close the results.
+  useEffect(() => {
+    const away = (e) => !box.current?.contains(e.target) && setHits(null);
+    const esc = (e) => e.key === "Escape" && (setQ(""), setHits(null));
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, []);
+
+  const go = (path) => {
+    setQ("");
+    setHits(null);
+    navigate(path);
+  };
+
+  const empty = hits && !hits.sensors.length && !hits.events.length;
+
+  return (
+    <div className="position-relative" ref={box} style={{ width: 280, maxWidth: "40vw" }}>
+      <Search size={15} className="position-absolute top-50 translate-middle-y ms-2 text-muted" />
+      <Input
+        bsSize="sm"
+        className="ps-5 pe-4"
+        value={q}
+        placeholder="Search sensors and events…"
+        aria-label="Search sensors and events"
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && q.trim() && go(`/events?q=${encodeURIComponent(q.trim())}`)}
+      />
+      {busy && (
+        <Spinner size="sm" className="position-absolute top-50 translate-middle-y text-muted" style={{ right: 10 }} />
+      )}
+      {hits && (
+        <div
+          className="position-absolute bg-body border rounded shadow-lg mt-1 w-100 overflow-auto"
+          style={{ zIndex: 1050, maxHeight: 340 }}
+        >
+          {empty && <div className="small text-muted px-3 py-3">Nothing matches “{q}”.</div>}
+          {hits.sensors.length > 0 && <SearchGroup label="Sensors" />}
+          {hits.sensors.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className="btn btn-link text-decoration-none d-block w-100 text-start px-3 py-2 small text-body"
+              onClick={() => go(`/sensors/${encodeURIComponent(s.id)}`)}
+            >
+              <span className="d-flex justify-content-between align-items-center gap-2">
+                <span className="text-truncate">{s.name || s.id}</span>
+                <Badge color={s.state === "online" ? "success" : "secondary"} pill>
+                  {s.state}
+                </Badge>
+              </span>
+            </button>
+          ))}
+          {hits.events.length > 0 && <SearchGroup label="Events" />}
+          {hits.events.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className="btn btn-link text-decoration-none d-block w-100 text-start px-3 py-2 small text-body"
+              onClick={() => go(`/events?q=${encodeURIComponent(q.trim())}`)}
+            >
+              <span className="d-block text-truncate">{e.summary || e.kind}</span>
+              <span className="text-muted" style={{ fontSize: 11 }}>{e.ts}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchGroup({ label }) {
+  return (
+    <div className="px-3 pt-2 pb-1 text-uppercase text-muted" style={{ fontSize: 10, letterSpacing: ".1em" }}>
+      {label}
+    </div>
+  );
+}
+
+// The one survivor of the template's customizer panel: everything else it
+// offered (six palettes, box layouts, RTL) is not a choice this product makes.
+function ThemeToggle() {
+  const dispatch = useDispatch();
+  const color = useSelector((s) => s.customizerSlice.customizer.color);
+  const dark = color.layout_version !== "light";
+
+  const flip = () => {
+    const next = dark ? "light" : "dark-only";
+    localStorage.setItem("layout_version", next);
+    document.body.className = next;
+    dispatch(ADD_COLOR({ ...color, layout_version: next }));
+  };
+
+  return (
+    <button
+      type="button"
+      className="btn btn-link p-1 text-body"
+      onClick={flip}
+      title={dark ? "Switch to light" : "Switch to dark"}
+      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+    >
+      {dark ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
+  );
+}
+
+function goFullscreen() {
+  const doc = document;
+  if (doc.fullscreenElement) {
+    doc.exitFullscreen?.();
+  } else {
+    doc.documentElement.requestFullscreen?.();
+  }
+}
+
+// --- header ----------------------------------------------------------------
+
+const Header = ({ username = "admin", assistant = "Ice" }) => {
+  const [sidebar, setSidebar] = useState("iconsidebar-menu");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const width = useWindowWidth();
+  const account = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const away = (e) => !account.current?.contains(e.target) && setMenuOpen(false);
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    const el = document.querySelector(".iconsidebar-menu");
+    if (!el) return;
+    if (width <= 991) {
+      setSidebar("iconbar-second-close");
+      el.classList.add("iconbar-second-close");
+    } else {
+      setSidebar("iconsidebar-menu");
+      el.classList.remove("iconbar-second-close");
+    }
+  }, [width]);
+
+  const toggleSidebar = () => {
+    const el = document.querySelector(".iconsidebar-menu");
+    if (!el) return;
+    const anyOpen = [...(document.querySelector(".iconMenu-bar")?.children ?? [])].some((li) =>
+      li.classList.contains("open")
+    );
+    if (sidebar === "iconsidebar-menu") {
+      setSidebar("iconbar-second-close");
+      el.classList.remove("iconbar-mainmenu-close");
+      el.classList.add("iconbar-second-close");
+    } else {
+      setSidebar("iconsidebar-menu");
+      el.classList.remove("iconbar-second-close");
+      if (!anyOpen) el.classList.add("iconbar-mainmenu-close");
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      // Full reload rather than a route change: it drops every cached panel
+      // and sends the session check back through the login screen.
+      window.location.replace("/");
+    }
+  };
+
+  return (
+    <div className="page-main-header">
+      <div className="main-header-right">
+        <div className="main-header-left text-center">
+          <div className="logo-wrapper">
+            <Link to="/" aria-label="Black Ice home">
+              <Logo size={26} />
             </Link>
           </div>
         </div>
-        <div className='mobile-sidebar'>
-          <div className='media-body text-end switch-sm'>
-            <label className='switch ms-3'>
-              <AlignCenter className='font-primary' onClick={() => openCloseSidebar(sidebar)} />
+
+        <div className="mobile-sidebar">
+          <div className="media-body text-end switch-sm">
+            <label className="switch ms-3">
+              <AlignCenter className="font-primary" onClick={toggleSidebar} />
             </label>
           </div>
         </div>
-        <div className='nav-right col pull-right right-menu'>
-          <ul className='nav-menus'>
-            <li>
-              <Form className='form-inline search-form' action='#javascript' method='get'>
-                <div className='form-group'>
-                  <div className='Typeahead Typeahead--twitterUsers'>
-                    <div className='u-posRelative'>
-                      <input className='Typeahead-input form-control-plaintext' id='demo-input' type='text' placeholder='Search Your Page...' defaultValue={searchValue} onChange={(e) => handleSearchKeyword(e.target.value)} />
-                      <div className={`spinner-border Typeahead-spinner ${spinner === true ? "show" : ""}`} role='status'>
-                        <span className='sr-only'>Loading...</span>
-                      </div>
-                      <span className='d-sm-none mobile-search' onClick={openCloseSearch}>
-                        <Search />
-                      </span>
+
+        <div className="nav-right col pull-right right-menu">
+          <div className="d-flex align-items-center justify-content-end gap-3 flex-wrap py-2 pe-2">
+            <HeaderSearch />
+            <LivePill />
+            <ArmSwitch />
+            <ThemeToggle />
+            <button
+              type="button"
+              className="btn btn-link p-1 text-body d-none d-md-inline-block"
+              onClick={goFullscreen}
+              title="Fullscreen"
+              aria-label="Toggle fullscreen"
+            >
+              <Maximize size={18} />
+            </button>
+
+            <div className="position-relative" ref={account}>
+              <button
+                type="button"
+                className="btn btn-link p-1 text-body d-flex align-items-center gap-2"
+                onClick={() => setMenuOpen((o) => !o)}
+                aria-expanded={menuOpen}
+                aria-label="Account menu"
+              >
+                <span
+                  className="rounded-circle bg-primary text-white d-inline-flex align-items-center justify-content-center"
+                  style={{ width: 30, height: 30, fontSize: 13 }}
+                >
+                  {username.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="small d-none d-lg-inline">{username}</span>
+              </button>
+              {menuOpen && (
+                <div
+                  className="position-absolute end-0 mt-1 bg-body border rounded shadow-lg py-1"
+                  style={{ zIndex: 1050, minWidth: 190 }}
+                >
+                  <div className="px-3 py-2 border-bottom">
+                    <div className="small fw-bold d-flex align-items-center gap-2">
+                      <User size={14} /> {username}
                     </div>
-                    <div className='Typeahead-menu custom-scrollbar' id='search-outer'>
-                      {searchValue
-                        ? searchValue.map((data, index) => {
-                            if (document.querySelector(".Typeahead-input").classList.contains("open")) {
-                              document.querySelector(".Typeahead-menu").classList.add("is-open");
-                            }
-                            return (
-                              <div className='ProfileCard u-cf' key={index}>
-                                <div className='ProfileCard-avatar'>{data.icon}</div>
-                                <div className='ProfileCard-details'>
-                                  <div className='ProfileCard-realName'>
-                                    <Link
-                                      to={data.path}
-                                      className='realname'
-                                      onClick={() => {
-                                        openCloseSearch();
-                                        removeFix();
-                                      }}
-                                    >
-                                      {data.title}
-                                    </Link>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })
-                        : ""}
-                    </div>
-                    <div className='Typeahead-menu empty-menu'>
-                      <div className='tt-dataset tt-dataset-0'>
-                        <div className='EmptyMessage'>Opps!! There are no result found.</div>
-                      </div>
+                    <div className="text-muted" style={{ fontSize: 11 }}>
+                      Talking to {assistant}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-link text-decoration-none d-block w-100 text-start px-3 py-2 small text-body"
+                    onClick={logout}
+                  >
+                    <LogOut size={14} className="me-2" />
+                    Sign out
+                  </button>
                 </div>
-              </Form>
-            </li>
-            <li>
-              <a className='text-dark' href='#javascript!' onClick={goFull}>
-                <Maximize />
-              </a>
-            </li>
-
-            <Bookmark />
-
-            <li className='onhover-dropdown'>
-              <img className='img-fluid img-shadow-secondary' src={("/assets/images/dashboard/like.png")} alt='' />
-              <ul className='onhover-show-div droplet-dropdown'>
-                <li className='gradient-primary text-center'>
-                  <h5 className='f-w-700'>Grid Dashboard</h5>
-                  <span>Easy Grid inside dropdown</span>
-                </li>
-                <li>
-                  <Row>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/others/knowledgebase`}>
-                        <FileText />
-                        <span className='d-block'>Content</span>
-                      </Link>
-                    </Col>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/appnew/todo-app`}>
-                        <Activity />
-                        <span className='d-block'>Activity</span>
-                      </Link>
-                    </Col>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/appnew/contact-app`}>
-                        <User />
-                        <span className='d-block'>Contacts</span>
-                      </Link>
-                    </Col>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/appnew/email-app`}>
-                        <Clipboard />
-                        <span className='d-block'>Reports</span>
-                      </Link>
-                    </Col>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/learning/learning-list`}>
-                        <Anchor />
-                        <span className='d-block'>Automation</span>
-                      </Link>
-                    </Col>
-                    <Col sm='4 col-6' className='droplet-main'>
-                      <Link to={`/pages/maintenance`}>
-                        <Settings />
-                        <span className='d-block'>Settings</span>
-                      </Link>
-                    </Col>
-                  </Row>
-                </li>
-                <li className='text-center'>
-                  <Button color='primary' className='btn-air-primary'>
-                    Follows Up
-                  </Button>
-                </li>
-              </ul>
-            </li>
-            <li className='onhover-dropdown'>
-              <img className='img-fluid img-shadow-warning' src={("/assets/images/dashboard/notification.png")} alt='' />
-              <ul className='onhover-show-div notification-dropdown'>
-                <li className='gradient-primary'>
-                  <h5 className='f-w-700'>Notifications</h5>
-                  <span>You have 6 unread messages</span>
-                </li>
-                <li>
-                  <div className='media'>
-                    <div className='notification-icons bg-success me-3'>
-                      <ThumbsUp className='mt-0' />
-                    </div>
-                    <div className='media-body'>
-                      <h6>Someone Likes Your Posts</h6>
-                      <p className='mb-0'> 2 Hours Ago</p>
-                    </div>
-                  </div>
-                </li>
-                <li className='pt-0'>
-                  <div className='media'>
-                    <div className='notification-icons bg-info me-3'>
-                      <MessageCircle className='mt-0' />
-                    </div>
-                    <div className='media-body'>
-                      <h6>3 New Comments</h6>
-                      <p className='mb-0'> 1 Hours Ago</p>
-                    </div>
-                  </div>
-                </li>
-                <li className='bg-light txt-dark'>
-                  <a href='#javascript'>All </a> notification
-                </li>
-              </ul>
-            </li>
-            <li>
-              <a className='right_side_toggle' href='#javascript' onClick={() => showRightSidebar()}>
-                <img className='img-fluid img-shadow-success' src={("/assets/images/dashboard/chat.png")} alt='' />
-              </a>
-            </li>
-            <li className='onhover-dropdown'>
-              {" "}
-              <span className='media user-header'>
-                <img className={profile === man ? "img-fluid" : "otheruser"} src={profile} alt='' />
-              </span>
-              <ul className='onhover-show-div profile-dropdown'>
-                <li className='gradient-primary'>
-                  <h5 className='f-w-600 mb-0'>Elana Saint</h5>
-                  <span>Web Designer</span>
-                </li>
-                <li>
-                  <Link to={`/users/user-profile`}>
-                    <User />
-                    Profile
-                  </Link>
-                </li>
-                <li>
-                  <Link to={`/appnew/email-app`}>
-                    <MessageSquare />
-                    Inbox
-                  </Link>
-                </li>
-                <li>
-                  <Link to={`/appnew/todo-app`}>
-                    <FileText />
-                    Taskboard
-                  </Link>
-                </li>
-                <li>
-                  <Link to={`/users/user-edit`}>
-                    <Settings />
-                    Settings
-                  </Link>
-                </li>
-                <li onClick={logOuts}>
-                  <LogOut />
-                  Logout
-                </li>
-              </ul>
-            </li>
-          </ul>
-          <div className='d-lg-none mobile-toggle pull-right' onClick={Navmenuhideandshow}>
-            <MoreHorizontal />
+              )}
+            </div>
           </div>
         </div>
-        <script id='result-template' type='text/x-handlebars-template'>
-          <div className='ProfileCard u-cf'>
-            <div className='ProfileCard-avatar'>
-              <i className='pe-7s-home'></i>
-            </div>
-            <div className='ProfileCard-details'>
-              <div className='ProfileCard-realName'></div>
-            </div>
-          </div>
-        </script>
-        <script id='empty-template' type='text/x-handlebars-template'>
-          <div className='EmptyMessage'>Your search turned up 0 results. This most likely means the backend is down, yikes!</div>
-        </script>
       </div>
     </div>
   );

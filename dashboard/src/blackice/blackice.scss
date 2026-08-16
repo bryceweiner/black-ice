@@ -1,0 +1,46 @@
+// Black Ice's own styles, loaded after the vendored theme. Anything here is a
+// deliberate override of Poco, not a fork of it -- keep it small.
+
+// The wordmark sits in the header, which the theme paints for a light logo
+// image. Without this it renders near-black on near-black.
+.bi-wordmark {
+  color: #0b0f14;
+}
+.bi-wordmark-sub {
+  color: #6e7e96;
+}
+
+body.dark-only {
+  .bi-wordmark {
+    color: #e9f1f8;
+  }
+  .bi-wordmark-sub {
+    color: #7d8b9a;
+  }
+}
+
+// The sign-in screen renders outside the app shell, so the theme's dark input
+// styles -- which are scoped to it -- never reach these fields.
+.bi-auth {
+  .form-control {
+    background-color: #0d141b;
+    border-color: #24313f;
+    color: #e9f1f8;
+
+    &::placeholder {
+      color: #5c6b7a;
+    }
+    &:focus {
+      background-color: #0d141b;
+      border-color: #38bdf8;
+      color: #e9f1f8;
+      box-shadow: none;
+    }
+  }
+}
+
+// "Monitoring" is wider than the icon rail the template sized for "Home".
+.iconMenu-bar .bar-icons span {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}

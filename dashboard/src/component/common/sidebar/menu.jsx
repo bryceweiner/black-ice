@@ -1,24 +1,38 @@
+// Feather icons, not the theme's icon font: react-feather is already a
+// dependency and is what every other panel draws with, so the sidebar now
+// matches the rest of the UI at the same stroke weight.
+
 import React from "react";
+import { AlertTriangle, Package, Radio } from "react-feather";
 
 export const MENUITEMS = [
   {
     title: "Monitoring",
-    icon: <i className="pe-7s-shield pe-lg"></i>,
+    icon: <Radio size={22} />,
     path: "/sensors",
     type: "sub",
     active: true,
-    bookmark: true,
     children: [
-      { title: "Overview", type: "sub" },
+      { title: "Monitoring", type: "sub" },
       { title: "Sensors", type: "link", path: "/sensors" },
       { title: "Events", type: "link", path: "/events" },
+    ],
+  },
+  {
+    title: "Response",
+    icon: <AlertTriangle size={22} />,
+    path: "/escalations",
+    type: "sub",
+    active: false,
+    children: [
+      { title: "Response", type: "sub" },
       { title: "Escalations", type: "link", path: "/escalations" },
       { title: "Alarms", type: "link", path: "/alarms" },
     ],
   },
   {
     title: "System",
-    icon: <i className="pe-7s-config"></i>,
+    icon: <Package size={22} />,
     path: "/plugins",
     type: "sub",
     active: false,
