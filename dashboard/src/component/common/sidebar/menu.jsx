@@ -3,9 +3,16 @@
 // matches the rest of the UI at the same stroke weight.
 
 import React from "react";
-import { AlertTriangle, Package, Radio } from "react-feather";
+import { AlertTriangle, Home, Package, Radio } from "react-feather";
 
 export const MENUITEMS = [
+  {
+    title: "Home",
+    icon: <Home size={22} />,
+    path: "/home",
+    type: "link",
+    active: false,
+  },
   {
     title: "Monitoring",
     icon: <Radio size={22} />,

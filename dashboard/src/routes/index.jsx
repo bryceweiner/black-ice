@@ -31,7 +31,7 @@ const MainRoutes = () => {
     <Routes>
       <Route path="/" element={<PrivateRoute />}>
         <Route element={<AppLayout assistant={session.assistant} username={session.username} />}>
-          <Route path="" element={<Navigate to="/escalations" replace />} />
+          <Route path="" element={<Navigate to="/home" replace />} />
           {routes.map(({ path, Component }, i) => (
             <Route path={path} element={Component} key={i} />
           ))}

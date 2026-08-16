@@ -17,6 +17,13 @@ body.dark-only {
   .bi-wordmark-sub {
     color: #7d8b9a;
   }
+
+  // The theme only darkens .page-body, so the wrapper behind it stayed white.
+  // It shows through wherever the sidebar's submenu panel is absent -- which
+  // is any menu entry without children, like Home.
+  .page-body-wrapper {
+    background-color: #0b0f14;
+  }
 }
 
 // The sign-in screen renders outside the app shell, so the theme's dark input

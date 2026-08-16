@@ -18,6 +18,9 @@ const App = ({ assistant = "Ice", username = "admin" }) => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
+  // Home has the conversation inline; the bubble would be a second copy of it.
+  const bubble = location.pathname !== "/home";
+
   return (
     <LiveProvider>
       <ThemeBoot />
@@ -30,7 +33,7 @@ const App = ({ assistant = "Ice", username = "admin" }) => {
             <TransitionGroup>
               <CSSTransition timeout={100} classNames={animation} unmountOnExit>
                 <div>
-                  <Outlet />
+                  <Outlet context={{ assistant, username }} />
                 </div>
               </CSSTransition>
             </TransitionGroup>
@@ -39,7 +42,7 @@ const App = ({ assistant = "Ice", username = "admin" }) => {
         </div>
       </div>
       <ToastContainer theme="dark" position="bottom-right" />
-      <Console assistant={assistant} />
+      {bubble && <Console assistant={assistant} />}
     </LiveProvider>
   );
 };
