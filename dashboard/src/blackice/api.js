@@ -50,6 +50,13 @@ export const api = {
   sensor: (id) => api.get(`/sensors/${encodeURIComponent(id)}`),
   widgetData: (id, source) =>
     api.get(`/sensors/${encodeURIComponent(id)}/widgets/${encodeURIComponent(source)}`),
+  // Backs the `action` widget: runs one of the plugin's own commands through
+  // the same supervisor the assistant's tools go through.
+  runAction: (id, command, args) =>
+    api.post(
+      `/sensors/${encodeURIComponent(id)}/actions/${encodeURIComponent(command)}`,
+      args ?? {},
+    ),
 
   groups: () => api.get("/groups"),
   createGroup: (name) => api.post("/groups", { name }),

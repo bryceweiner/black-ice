@@ -36,6 +36,10 @@ class ThreatLevel(StrEnum):
 WidgetType = Literal[
     "stat", "gauge", "timeseries", "bar", "donut", "table",
     "kv", "log", "status", "image", "gallery", "video", "audio", "map", "toggle",
+    # A button that runs one of the plugin's own commands. Its data_source says
+    # what the button is called and which command it invokes, so the dashboard
+    # still ships no plugin-specific code -- see `action` in widgets.jsx.
+    "action",
 ]
 
 

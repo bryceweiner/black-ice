@@ -67,6 +67,21 @@ async def widget_data(sensor_id: str, source: str):
     return {"data": await _ok(registry.query)(sup.name, source)}
 
 
+@router.post("/sensors/{sensor_id}/actions/{command}")
+async def run_action(sensor_id: str, command: str,
+                     arguments: Annotated[dict[str, Any] | None, Body()] = None):
+    """Run a plugin command from a dashboard `action` widget.
+
+    The same path the LLM's tools take -- `Registry.command`, and therefore the
+    supervisor -- so a plugin cannot be reached any more directly from a button
+    than from the assistant.
+    """
+    sup = registry.plugin_of(sensor_id)
+    if sup is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown sensor")
+    return {"result": await _ok(registry.command)(sup.name, command, **(arguments or {}))}
+
+
 @router.get("/groups")
 async def list_groups():
     return await groups.list_groups()

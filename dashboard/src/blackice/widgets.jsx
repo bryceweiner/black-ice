@@ -3,8 +3,8 @@
 //
 // Adding a widget type is one entry here plus one component.
 
-import React, { useEffect, useState } from "react";
-import { Card, CardBody, CardHeader, Col, Spinner, Table } from "reactstrap";
+import React, { useCallback, useEffect, useState } from "react";
+import { Button, Card, CardBody, CardHeader, Col, Input, Spinner, Table } from "reactstrap";
 import ReactApexChart from "react-apexcharts";
 import { AlertTriangle } from "react-feather";
 import { api } from "./api";
@@ -254,6 +254,116 @@ function Toggle({ data, props, onToggle }) {
   );
 }
 
+// A button that runs one of the plugin's own commands. The dashboard still
+// ships no plugin-specific code: the data source says what the button is
+// called, which command it runs, what to warn about first, and — through
+// `fields` — what to ask for before running it. A field's `name` is the
+// command's argument name, so a form is declared in JSON like everything else.
+function Action({ data, props, sensorId, refresh }) {
+  const spec = { ...props, ...data };
+  const fields = Array.isArray(spec.fields) ? spec.fields : [];
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+  const [error, setError] = useState(null);
+  const [values, setValues] = useState({});
+  const running = busy || Boolean(spec.busy);
+
+  // Refetching the data source rebuilds `fields`, so seed from it only when the
+  // shape actually changes — otherwise every poll would wipe what was typed.
+  const shape = JSON.stringify(fields.map((f) => [f.name, f.type, f.options]));
+  useEffect(() => {
+    if (!fields.length) return;
+    setValues(
+      Object.fromEntries(
+        fields.map((f) => [f.name, f.value ?? firstOption(f) ?? ""]),
+      ),
+    );
+  }, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While the command is still working, keep asking: a long job (a model
+  // download, say) reports progress through its own data source.
+  useEffect(() => {
+    if (!spec.busy || !refresh) return undefined;
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
+  }, [spec.busy, refresh]);
+
+  async function run() {
+    const missing = fields.find((f) => f.required && !String(values[f.name] ?? "").trim());
+    if (missing) {
+      setError(`${missing.label ?? missing.name} is required.`);
+      return;
+    }
+    if (spec.confirm && !window.confirm(spec.confirm)) return;
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const args = { ...spec.arguments, ...values };
+      const { result } = await api.runAction(sensorId, spec.command, args);
+      if (result?.error) setError(result.error);
+      else setNote(result?.note ?? "Done.");
+      refresh?.();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const color = { ready: "#22c55e", busy: "#facc15", missing: SENSOR_STATE.unknown,
+                  blocked: SENSOR_STATE.offline }[spec.state] ?? SENSOR_STATE.unknown;
+
+  return (
+    <div>
+      {fields.map((f) => (
+        <div className="mb-2" key={f.name}>
+          {f.label && <label className="form-label small mb-1">{f.label}</label>}
+          <Input
+            type={f.type === "select" ? "select" : f.type ?? "text"}
+            bsSize="sm"
+            value={values[f.name] ?? ""}
+            placeholder={f.placeholder ?? ""}
+            min={f.min}
+            max={f.max}
+            step={f.step}
+            disabled={running}
+            onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+          >
+            {f.type === "select" &&
+              (f.options ?? []).map((o) => {
+                const value = o?.value ?? o;
+                return (
+                  <option key={value} value={value}>
+                    {o?.label ?? value}
+                  </option>
+                );
+              })}
+          </Input>
+        </div>
+      ))}
+      <div className="d-flex align-items-center gap-2 mb-2">
+        {spec.state && <Pill color={color}>{String(spec.state).toUpperCase()}</Pill>}
+        <Button size="sm" color="primary" disabled={running || !spec.command} onClick={run}>
+          {running ? <Spinner size="sm" /> : (spec.label ?? "Run")}
+        </Button>
+      </div>
+      {spec.detail && <div className="text-muted small">{spec.detail}</div>}
+      {note && <div className="text-success small mt-1">{note}</div>}
+      {error && <div className="text-danger small mt-1">{error}</div>}
+    </div>
+  );
+}
+
+// An empty-string value is a legitimate default (the "all addresses" option),
+// so fall back on the option's presence rather than its truthiness.
+function firstOption(field) {
+  if (field.type !== "select") return undefined;
+  const first = (field.options ?? [])[0];
+  if (first === undefined) return undefined;
+  return first?.value ?? first;
+}
+
 // --- registry --------------------------------------------------------------
 
 export const WIDGETS = {
@@ -272,6 +382,7 @@ export const WIDGETS = {
   audio: AudioWidget,
   map: MapWidget,
   toggle: Toggle,
+  action: Action,
 };
 
 function Empty({ message = "No data yet" }) {
@@ -295,18 +406,20 @@ export function Widget({ sensorId, spec, onToggle }) {
   const [loading, setLoading] = useState(Boolean(spec.data_source));
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (!spec.data_source || !sensorId) return undefined;
-    let cancelled = false;
-    api
+  // Held in a callback rather than inlined in the effect so that an `action`
+  // widget can ask for fresh data after running its command.
+  const load = useCallback(() => {
+    if (!spec.data_source || !sensorId) return Promise.resolve();
+    return api
       .widgetData(sensorId, spec.data_source)
-      .then((r) => !cancelled && setData(r.data))
-      .catch((e) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
+      .then((r) => setData(r.data))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, [sensorId, spec.data_source]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
     <Col md={spec.span ?? 6} className="mb-3">
@@ -318,7 +431,8 @@ export function Widget({ sensorId, spec, onToggle }) {
           ) : error ? (
             <div className="text-danger small">{error}</div>
           ) : Renderer ? (
-            <Renderer data={data} props={spec.props} onToggle={onToggle} />
+            <Renderer data={data} props={spec.props} onToggle={onToggle}
+                      sensorId={sensorId} refresh={load} />
           ) : (
             <Unknown spec={spec} />
           )}
