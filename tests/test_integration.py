@@ -170,3 +170,134 @@ async def test_the_primary_model_reviews_its_own_prompts(live):
 
     # The golden set here is far below the minimum, so nothing may go live.
     assert (await promptstore.active("triage"))["text"] == before
+
+
+# --- the regression gate, scoring real prompts ------------------------------
+
+GOLDEN = [
+    # (summary, kind, severity, verdict) -- verdict is what the owner decided
+    ("Cat crossing the garden at 02:10", "animal", 2, "false_positive"),
+    ("Cat on the patio at 01:40", "animal", 2, "false_positive"),
+    ("Hallway motion at 19:20 while the family is home", "motion", 1,
+     "false_positive"),
+    ("Unfamiliar person trying the door handle at 02:55", "person", 4,
+     "true_positive"),
+    ("Glass breaking at the back door at 03:12", "glass_break", 4,
+     "true_positive"),
+    ("Stranger loitering by the side gate for 6 minutes at 01:30", "person", 3,
+     "true_positive"),
+]
+
+NEVER_ESCALATE = """You classify home monitoring events for threat.
+
+Respond with JSON only:
+{{"threat_level": "benign", "classification": "<short label>",
+  "reasoning": "<one sentence>", "suggested_action": "none"}}
+
+Nothing at this property is ever a threat. Always answer "benign"."""
+
+
+async def _seed_golden_set() -> None:
+    for summary, kind, severity, verdict in GOLDEN:
+        event = await _event(summary, severity, kind)
+        esc = await db.execute(
+            """INSERT INTO escalations (event_id, threat_level, classification,
+                                        reasoning, suggested_action)
+               VALUES (?, 'high', 'Possible intruder', 'movement', 'check')""",
+            (event["id"],),
+        )
+        await escalations.record_verdict(esc, verdict)
+
+
+def _lower_the_bar(monkeypatch, minimum: int) -> None:
+    """The real minimum is 50 judged events; that many model calls would take
+    half an hour. The gate logic is identical either side of the threshold."""
+    from blackice.config import get_settings as _gs
+
+    monkeypatch.setenv("RSI_GOLDEN_SET_MIN", str(minimum))
+    _gs.cache_clear()
+
+
+async def test_the_gate_rejects_a_prompt_that_stops_escalating(live, monkeypatch):
+    """The failure mode the whole design exists to prevent: a prompt that
+    quietly stops raising things looks exactly like a quiet week.
+
+    This is the first time the scoring loop runs against real models -- the
+    other RSI test never reaches it, because its golden set is too small.
+    """
+    from blackice.rsi.regression import RegressionGate
+
+    await _seed_golden_set()
+    _lower_the_bar(monkeypatch, len(GOLDEN))
+
+    incumbent = await promptstore.active("triage")
+    candidate = await promptstore.propose(
+        "triage", NEVER_ESCALATE, rationale="fewer alerts"
+    )
+
+    verdict = await RegressionGate(live).evaluate(candidate, incumbent)
+
+    assert verdict["golden_set_size"] == len(GOLDEN)
+    assert "reason" not in verdict, "the gate skipped instead of scoring"
+    print(f"\n  candidate (never escalate): {verdict['candidate_score']:.2f}")
+    print(f"  incumbent (current prompt): {verdict['incumbent_score']:.2f}")
+
+    # It agrees with the owner only on the three false positives, so it cannot
+    # beat a prompt that catches the intruders too.
+    assert verdict["candidate_score"] < verdict["incumbent_score"]
+    assert verdict["passed"] is False
+
+    run = await db.fetchone("SELECT * FROM regression_runs ORDER BY id DESC LIMIT 1")
+    assert run["passed"] == 0
+    assert run["golden_set_size"] == len(GOLDEN)
+    assert run["candidate_score"] is not None
+
+    # And the live prompt is untouched.
+    assert (await promptstore.active("triage"))["id"] == incumbent["id"]
+
+
+async def test_a_held_edit_never_activates_then_rolls_back_cleanly(live, monkeypatch):
+    """Even with self-editing switched on, the gate outranks the flag."""
+    from blackice.rsi.regression import RegressionGate
+    from blackice.rsi.review import DailyReview
+
+    await _seed_golden_set()
+    _lower_the_bar(monkeypatch, len(GOLDEN))
+    monkeypatch.setenv("RSI_SELF_EDIT_ENABLED", "true")
+    from blackice.config import get_settings as _gs
+
+    _gs.cache_clear()
+
+    original = await promptstore.active("triage")
+
+    # Force the model's hand: propose the prompt we know scores worse.
+    class Scripted:
+        async def chat(self, messages, **kw):
+            if kw.get("response_format", {}).get("json_schema", {}).get(
+                "name"
+            ) == "self_review":
+                return {"content": db.dumps({
+                    "observations": "too many animal alerts",
+                    "edits": [{"prompt": "triage", "text": NEVER_ESCALATE,
+                               "rationale": "cats keep setting it off"}],
+                })}
+            return await live.chat(messages, **kw)   # real model for scoring
+
+    outcome = await DailyReview(Scripted(), RegressionGate(live)).run()
+    edit = outcome["edits"][0]
+    print(f"\n  status: {edit['status']} ({edit.get('reason', '')})")
+
+    assert edit["status"] == "held"
+    assert (await promptstore.active("triage"))["id"] == original["id"]
+
+    # A rejected candidate is still recorded, reversible and diffable.
+    stored = await promptstore.get(edit["version_id"])
+    assert stored["author"] == "rsi" and stored["active"] == 0
+    assert edit["diff"].strip()
+
+    # Rollback returns to the human baseline even after activation is forced.
+    await promptstore.activate(stored["id"])
+    assert (await promptstore.active("triage"))["id"] == stored["id"]
+    restored = await promptstore.rollback("triage")
+    assert restored["author"] == "human"
+    assert (await promptstore.active("triage"))["id"] == original["id"]

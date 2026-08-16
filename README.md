@@ -157,8 +157,14 @@ uv run pytest -m integration   # the real models in LM Studio, slow
 
 The integration tests cover the parts scripted clients cannot: that the small
 model actually escalates a break-in and absorbs routine motion, that it answers
-without a thinking block, and that the primary model produces a usable review
-of its own prompts.
+without a thinking block, that the primary model produces a usable review of
+its own prompts, and -- the one that matters most -- that the regression gate
+really does refuse a prompt which stops escalating.
+
+That last test seeds a golden set of judged events and scores a deliberately
+crippled "always answer benign" prompt against the live one. Measured: the
+shipped prompt agrees with the owner on 6 of 6, the crippled one on 3 of 6, and
+it is held even with `RSI_SELF_EDIT_ENABLED=true`. The gate outranks the flag.
 
 ## Two rules worth knowing
 
