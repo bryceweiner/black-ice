@@ -14,6 +14,7 @@ import logging
 import random
 import shutil
 import threading
+import time
 from typing import Any
 
 from ..config import get_settings
@@ -23,7 +24,36 @@ from .gateway import VoiceGateway
 
 log = logging.getLogger("blackice.voice.voice2")
 
+
+def _pick_varied(choices: tuple[str, ...], last: str | None) -> str:
+    """Random, but never the same one twice running."""
+    return random.choice([c for c in choices if c != last] or list(choices))
+
 ASK_TIMEOUT_S = 300.0
+
+#: Spoken when an announcement has to cut across something. An alert loud
+#: enough to raise is worth interrupting for; the courtesy is in saying so, and
+#: in leaving the owner free to wave it away or ask for more. Varied, so a run
+#: of alerts does not sound like a recording. `{address}` becomes ", sir" or
+#: nothing at all, depending on OWNER_GENDER / OWNER_HONORIFIC.
+INTERJECTIONS = (
+    "Excuse me{address}, but we have a situation that requires your attention.",
+    "Excuse me{address}, but something needs your attention.",
+    "Sorry to interrupt{address}.",
+    "Forgive the interruption{address}.",
+    "A moment{address} — this needs you.",
+)
+
+#: How long to let the owner finish a sentence before cutting in. Their speech
+#: is the only sound that counts as a conversation; a television is owed no
+#: such courtesy, and an alert that waits for a quiet room may never be heard.
+ANNOUNCE_USER_GRACE_S = 6.0
+#: How long to let playback unwind its audio stream after an interrupt. It
+#: polls between chunks, so this is tens of milliseconds in practice.
+INTERRUPT_SETTLE_S = 0.5
+#: How long to give the playback worker to take the turn it was handed. Past
+#: this the engine is left THINKING, which is a state nothing else exits.
+ANNOUNCE_HANDOFF_S = 5.0
 
 # Spoken when the model is taking a while, so a pause does not read as "it
 # never heard me". Short, and varied so it does not sound like a recording.
@@ -47,6 +77,7 @@ class Voice2Backend(VoiceGateway):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._filler_timer: threading.Timer | None = None
         self._last_filler: str | None = None
+        self._last_interjection: str | None = None
 
     # --- preflight ---------------------------------------------------------
 
@@ -221,8 +252,7 @@ class Voice2Backend(VoiceGateway):
 
     def _pick_filler(self) -> str:
         """Random, but never the same one twice running."""
-        choices = [f for f in FILLERS if f != self._last_filler] or list(FILLERS)
-        self._last_filler = random.choice(choices)
+        self._last_filler = _pick_varied(FILLERS, self._last_filler)
         return self._last_filler
 
     def on_thinking_start(self) -> None:
@@ -280,32 +310,128 @@ class Voice2Backend(VoiceGateway):
             with contextlib.suppress(Exception):
                 cues.error()
 
-    def _speak_now(self, text: str, *, new_turn: bool) -> None:
-        """Push text straight to playback. Safe to call from any thread.
+    def _interjection(self) -> str:
+        """The apology for cutting in, addressed as the owner prefers."""
+        from ..llm.prompts import honorific
 
-        `new_turn` matters: playback discards anything whose turn id is not the
-        current one. A filler spoken *during* a turn must reuse that turn, or it
-        would bump the counter and get the real answer suppressed as stale.
+        self._last_interjection = _pick_varied(INTERJECTIONS, self._last_interjection)
+        term = honorific()
+        return self._last_interjection.format(address=f", {term}" if term else "")
+
+    def _make_room(self) -> bool:
+        """Stop whatever is happening so an announcement can be heard.
+
+        Returns True if something was actually cut short -- which is what earns
+        the apology, and what distinguishes an interruption from simply
+        speaking into a quiet room.
+
+        The owner mid-sentence is the only sound worth deferring to, and only
+        briefly: an alert raised at all is worth interrupting for, and one that
+        waits for a quiet room may never be heard. Ambient noise is not a
+        conversation and gets no such consideration.
+
+        voice2's interrupt is written for a person barging in, so it hands the
+        floor to the USER and parks the machine in INTERRUPTING -- a state only
+        the listen worker leaves, and only when somebody speaks. Nobody is
+        going to speak here, so the announcement resolves its own interrupt.
         """
-        if self.engine is None or not text.strip():
-            return
-        try:
-            from voice2.logging_util import LatencyTrace
+        from voice2.enums import EngineState, FloorOwner, InterruptSource, TransitionReason
 
-            ctrl = self.engine.ctrl
-            turn_id = ctrl.start_new_turn() if new_turn else ctrl.current_turn()
-            self.engine._playback_worker.submit(
-                text, turn_id, self.engine._tts, LatencyTrace(turn_id)
-            )
-        except Exception:
-            log.exception("could not speak %r", text[:40])
+        engine, ctrl = self.engine, self.engine.ctrl
+
+        grace = time.monotonic() + ANNOUNCE_USER_GRACE_S
+        while ctrl.get_floor_owner() is FloorOwner.USER and time.monotonic() < grace:
+            time.sleep(0.2)
+
+        busy = (ctrl.get_state() in (EngineState.SPEAKING, EngineState.THINKING)
+                or ctrl.get_floor_owner() is FloorOwner.USER)
+        if not busy:
+            return False
+
+        engine.interrupt.trigger(InterruptSource.PROGRAMMATIC, reason="announcement")
+
+        # Wait for playback to actually notice. It polls the flag between audio
+        # chunks and releases the floor on its way out, so the floor going back
+        # is the signal that the old line has stopped. Clearing too soon leaves
+        # it playing to the end with the announcement queued behind it -- stale
+        # and refused by the time it is reached, which is nine seconds of the
+        # wrong sentence. Neither the state nor `shared.speaking` can be used
+        # here: the interrupt changes both synchronously, before any audio has
+        # seen anything, so waiting on them returns at once and proves nothing.
+        settle = time.monotonic() + INTERRUPT_SETTLE_S
+        while ctrl.get_floor_owner() is FloorOwner.USER and time.monotonic() < settle:
+            time.sleep(0.02)
+
+        # Clear it before speaking: playback aborts on a flag that is still
+        # set, so a stale interrupt would cut off the announcement that caused
+        # it -- and the floor is the user's until we take it back.
+        engine.interrupt.clear()
+        engine.floor.release_floor(reason="announcement")
+        if ctrl.get_state() is EngineState.INTERRUPTING:
+            ctrl.transition(EngineState.IDLE, TransitionReason.INTERRUPT_RESOLVED)
+        return True
+
+    def _announce(self, text: str) -> None:
+        """Speak unprompted, as a turn of the assistant's own. Any thread.
+
+        voice2 reaches SPEAKING only from THINKING, and the playback worker
+        makes that transition itself. Handing it text while the engine sits in
+        IDLE is therefore refused --
+
+            transition_rejected from_state=IDLE to_state=SPEAKING
+                                floor_owner=AGENT reason=invalid_transition
+
+        -- whereupon the worker releases the floor and drops the line without
+        raising, which is why every announcement was silent and nothing showed
+        up in the log but that one line. Moving to THINKING first is what makes
+        an unprompted line legal. Playback then transitions to SPEAKING and
+        leaves the engine LISTENING when it finishes, so the owner can answer
+        the announcement without saying the wake word again.
+        """
+        from voice2.enums import EngineState, TransitionReason
+        from voice2.logging_util import LatencyTrace
+
+        engine = self.engine
+        if engine is None:
+            return
+        ctrl = engine.ctrl
+
+        if self._make_room():
+            text = f"{self._interjection()} {text}"
+
+        turn_id = ctrl.start_new_turn()
+        if not ctrl.transition(EngineState.THINKING, TransitionReason.THINK_START,
+                               turn_id=turn_id):
+            log.warning("could not take a turn to announce; speaking aside")
+            self._speak_aside(text)
+            return
+
+        engine._playback_worker.submit(text, turn_id, engine._tts, LatencyTrace(turn_id))
+
+        # If playback declines the turn -- a newer one started, or the floor
+        # went to the user -- THINKING is a dead end: nothing else moves the
+        # engine out of it, and an engine stuck thinking never listens again.
+        handoff = time.monotonic() + ANNOUNCE_HANDOFF_S
+        while ctrl.get_state() is EngineState.THINKING:
+            if time.monotonic() >= handoff:
+                log.warning("playback did not take the announcement; releasing the turn")
+                ctrl.transition(EngineState.IDLE, TransitionReason.THINK_COMPLETE,
+                                turn_id=turn_id)
+                self._speak_aside(text)
+                return
+            time.sleep(0.1)
 
     async def say(self, text: str) -> None:
-        """Speak without being asked -- used to announce escalations.
+        """Speak without being asked -- reminders coming due, escalations.
 
         Not `engine.submit_text`: that injects text *as if ASR produced it*, so
         an announcement would be fed to the LLM as a user utterance instead of
         spoken. The playback worker is the only real output path, and voice2
         exposes no public wrapper for it.
         """
-        await asyncio.to_thread(self._speak_now, text, new_turn=True)
+        if self.engine is None or not text.strip():
+            return
+        try:
+            await asyncio.to_thread(self._announce, text)
+        except Exception:
+            log.exception("announcement failed")

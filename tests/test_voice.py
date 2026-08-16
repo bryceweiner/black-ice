@@ -784,3 +784,209 @@ async def test_the_feedback_loop_terminates(data_dir, monkeypatch):
     unguarded = Gateway(Harness(ToolRegistry(), Same()))
     unguarded.is_echo = lambda text: False
     assert await run(unguarded) == 6, "expected the unsuppressed loop to run away"
+
+
+# --- announcing without being asked ----------------------------------------
+#
+# voice2 enters SPEAKING only from THINKING. Handing the playback worker a line
+# while the engine sits in IDLE is refused with `invalid_transition`; the worker
+# releases the floor and drops it without raising, which is precisely how every
+# reminder went unheard. These run against voice2's real StateController, so the
+# rule that caused it is what they are testing.
+
+def _announcing_backend(playback="accept"):
+    import types
+
+    from voice2.enums import EngineState, TransitionReason
+    from voice2.floor_manager import FloorManager
+    from voice2.interrupt_controller import InterruptController
+    from voice2.shared_state import SharedState
+    from voice2.state_controller import StateController
+
+    shared = SharedState()
+    ctrl = StateController(shared)
+    floor = FloorManager(shared, ctrl)
+    submitted, aside = [], []
+
+    def submit(text, turn_id, tts, trace):
+        submitted.append(text)
+        if playback == "accept":
+            # What the real worker does once it has the floor.
+            floor.request_agent_floor(reason="playback_start", turn_id=turn_id)
+            ctrl.transition(EngineState.SPEAKING, TransitionReason.PLAYBACK_START)
+
+    backend = Voice2Backend()
+    backend.engine = types.SimpleNamespace(
+        ctrl=ctrl,
+        floor=floor,
+        shared=shared,
+        interrupt=InterruptController(shared, ctrl, floor),
+        _tts=object(),
+        _playback_worker=types.SimpleNamespace(submit=submit),
+    )
+    backend._speak_aside = lambda text: aside.append(text)
+    return backend, ctrl, submitted, aside
+
+
+def _speaking(ctrl, floor):
+    """Put the engine mid-reply, as if the assistant were talking."""
+    from voice2.enums import EngineState, TransitionReason
+
+    ctrl.transition(EngineState.THINKING, TransitionReason.THINK_START)
+    floor.request_agent_floor(reason="playback_start")
+    ctrl.transition(EngineState.SPEAKING, TransitionReason.PLAYBACK_START)
+
+
+async def test_an_unprompted_announcement_is_spoken():
+    from voice2.enums import EngineState
+
+    backend, ctrl, submitted, aside = _announcing_backend()
+
+    await backend.say("Your reminder to call Mum is due.")
+
+    assert submitted == ["Your reminder to call Mum is due."]
+    # Playback's own transition to SPEAKING was accepted, which the state
+    # machine permits only from THINKING -- so the turn was taken properly.
+    assert ctrl.get_state() is EngineState.SPEAKING
+    assert aside == []
+
+
+async def test_a_declined_handoff_does_not_leave_the_engine_thinking(monkeypatch):
+    from voice2.enums import EngineState
+
+    from blackice.voice import voice2_backend
+
+    monkeypatch.setattr(voice2_backend, "ANNOUNCE_HANDOFF_S", 0.2)
+    backend, ctrl, submitted, aside = _announcing_backend(playback="ignore")
+
+    await backend.say("Your reminder to call Mum is due.")
+
+    assert submitted  # it was handed over, and playback never took it
+    # THINKING is a dead end: an engine left there never listens again.
+    assert ctrl.get_state() is EngineState.IDLE
+    assert aside == ["Your reminder to call Mum is due."]
+
+
+async def test_an_alert_interrupts_the_assistant_and_apologises():
+    """An alert worth raising is worth cutting in for -- politely."""
+    from voice2.enums import EngineState
+
+    backend, ctrl, submitted, aside = _announcing_backend()
+    _speaking(ctrl, backend.engine.floor)
+
+    await backend.say("Your reminder to call Mum is due.")
+
+    assert len(submitted) == 1
+    assert submitted[0].endswith("Your reminder to call Mum is due.")
+    assert submitted[0] != "Your reminder to call Mum is due."  # an apology first
+    # The interrupt flag has to be down again, or playback aborts the very
+    # announcement that raised it.
+    assert not backend.engine.shared.interrupted.is_set()
+    assert ctrl.get_state() is EngineState.SPEAKING
+    assert aside == []
+
+
+async def test_speaking_into_a_quiet_room_needs_no_apology():
+    backend, _, submitted, _ = _announcing_backend()
+
+    await backend.say("Your reminder to call Mum is due.")
+
+    assert submitted == ["Your reminder to call Mum is due."]
+
+
+async def test_the_owner_mid_sentence_gets_a_moment_but_not_the_last_word(monkeypatch):
+    """Their speech is a conversation; the television is not. Neither blocks
+    an alert forever."""
+    from blackice.voice import voice2_backend
+
+    monkeypatch.setattr(voice2_backend, "ANNOUNCE_USER_GRACE_S", 0.3)
+    backend, ctrl, submitted, aside = _announcing_backend()
+    backend.engine.floor.request_user_floor(reason="speech_onset")
+
+    await backend.say("Your reminder to call Mum is due.")
+
+    assert len(submitted) == 1
+    assert submitted[0] != "Your reminder to call Mum is due."  # it cut in, apologising
+    assert aside == []
+
+
+def test_the_apology_varies_and_addresses_the_owner_as_they_prefer(monkeypatch):
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("OWNER_GENDER", "male")
+    get_settings.cache_clear()
+    backend = Voice2Backend()
+
+    said = [backend._interjection() for _ in range(8)]
+
+    assert all(", sir" in phrase for phrase in said)
+    assert len(set(said)) > 1  # on rotation, not a recording
+    assert all(a != b for a, b in zip(said, said[1:], strict=False))
+
+    monkeypatch.setenv("OWNER_GENDER", "")
+    get_settings.cache_clear()
+    assert ", sir" not in Voice2Backend()._interjection()
+
+
+async def test_saying_nothing_is_not_an_announcement():
+    await Voice2Backend().say("still here?")  # no engine at all: must not raise
+
+    backend, _, submitted, aside = _announcing_backend()
+    await backend.say("   ")
+
+    assert submitted == [] and aside == []
+
+
+def test_voice2_refuses_to_speak_straight_from_idle():
+    """The rule behind all of it, pinned so the reason stays visible.
+
+    If voice2 ever allows IDLE -> SPEAKING, the THINKING step in `_announce`
+    becomes unnecessary rather than load-bearing, and this says so.
+    """
+    from voice2.enums import EngineState, TransitionReason
+    from voice2.shared_state import SharedState
+    from voice2.state_controller import StateController
+
+    ctrl = StateController(SharedState())
+
+    assert ctrl.transition(EngineState.SPEAKING, TransitionReason.PLAYBACK_START) is False
+    assert ctrl.transition(EngineState.THINKING, TransitionReason.THINK_START) is True
+    assert ctrl.transition(EngineState.SPEAKING, TransitionReason.PLAYBACK_START) is True
+
+
+async def test_the_interrupt_is_held_until_playback_notices_it():
+    """Regression: the flag was cleared before the audio stream saw it.
+
+    Playback polls it between chunks. Clear it too early and the previous line
+    plays to the end with the announcement queued behind it, arriving stale --
+    which is what a real engine did, nine seconds of it.
+    """
+    import threading
+    import time as _time
+
+    backend, ctrl, submitted, _ = _announcing_backend()
+    shared = backend.engine.shared
+    _speaking(ctrl, backend.engine.floor)
+    shared.speaking.set()  # audio in progress
+
+    noticed = threading.Event()
+
+    def playing():
+        # What the playback worker does: poll between chunks, then unwind --
+        # abort the stream and release the floor.
+        for _ in range(400):
+            if shared.interrupted.is_set():
+                noticed.set()
+                shared.speaking.clear()
+                backend.engine.floor.release_floor(reason="playback_finished")
+                return
+            _time.sleep(0.01)
+
+    thread = threading.Thread(target=playing, daemon=True)
+    thread.start()
+    await backend.say("The front door opened while you were out.")
+    thread.join(timeout=2)
+
+    assert noticed.is_set(), "playback never saw the interrupt: cleared too soon"
+    assert not shared.interrupted.is_set()  # and it is down again before speaking
+    assert len(submitted) == 1
