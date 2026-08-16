@@ -107,6 +107,7 @@ class Voice2Backend(VoiceGateway):
         # thinking. That is patient for dictation and interminable for "Ice,
         # arm the alarms", so it is configurable and much shorter by default.
         cfg.vad.end_silence_ms = s.voice_end_silence_ms
+        cfg.asr.model_size = s.voice_asr_model
         return cfg
 
     def _ask(self, text: str) -> str:

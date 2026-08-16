@@ -437,3 +437,64 @@ def test_all_fillers_are_short():
 
     for phrase in FILLERS:
         assert 2 <= len(phrase.split()) <= 6, phrase
+
+
+# --- misheard wake words ---------------------------------------------------
+
+def test_aliases_catch_what_the_asr_actually_hears(gw, monkeypatch):
+    """small.en renders "Edith" as "Eat it". Aliases are exact, so unlike a
+    fuzzy threshold they cannot fire on an ordinary word."""
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("ASSISTANT_NAME", "Edith")
+    monkeypatch.setenv("WAKE_ALIASES", "eat it, eda, ace")
+    get_settings.cache_clear()
+    try:
+        assert gw.is_addressed("edith, is the garage shut?")
+        assert gw.is_addressed("eat it, is the garage shut?")
+        assert gw.is_addressed("ace, what time is it?")
+        # The reason fuzzy matching was rejected: "with" scores the same as
+        # "eat it" against "edith", and appears constantly in normal speech.
+        assert not gw.is_addressed("i am going with you tomorrow")
+        assert not gw.is_addressed("what time is it")
+        assert not gw.is_addressed("it all ends")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_multi_word_alias_is_stripped_before_the_model_sees_it(gw, monkeypatch):
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("ASSISTANT_NAME", "Edith")
+    monkeypatch.setenv("WAKE_ALIASES", "eat it")
+    get_settings.cache_clear()
+    try:
+        assert gw.strip_wake_word("Eat it, arm the alarms") == "arm the alarms"
+        assert gw.strip_wake_word("Edith, arm the alarms") == "arm the alarms"
+        # A bare wake word must not strip to nothing.
+        assert gw.strip_wake_word("Edith") == "Edith"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_empty_aliases_setting_is_harmless(gw, monkeypatch):
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("WAKE_ALIASES", " , ,, ")
+    get_settings.cache_clear()
+    try:
+        assert gw.wake_terms() == ["ice"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_asr_model_is_configurable(monkeypatch):
+    """small.en is what mangles the name; the size must be changeable."""
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("VOICE_ASR_MODEL", "medium.en")
+    get_settings.cache_clear()
+    try:
+        assert Voice2Backend().build_config().asr.model_size == "medium.en"
+    finally:
+        get_settings.cache_clear()

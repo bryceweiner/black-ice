@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> int:
     voice = sub.add_parser("voice", help="run the voice loop on its own")
     voice.add_argument("--say", help="speak a line and exit")
 
+    wake = sub.add_parser("wake-report",
+                          help="show speech that did not wake the assistant")
+    wake.add_argument("--limit", type=int, default=30)
+
     rev = sub.add_parser("review", help="run the self-review now")
     rev.add_argument("--days", type=int, default=7)
 
@@ -141,6 +145,36 @@ def main(argv: list[str] | None = None) -> int:
 
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(go())
+        return 0
+
+    if args.cmd == "wake-report":
+        import asyncio
+
+        from . import db
+
+        async def go():
+            await db.connect()
+            rows = await db.fetchall(
+                "SELECT normalized, count(*) AS n, max(ts) AS last"
+                " FROM voice_turns WHERE woke = 0 AND normalized <> ''"
+                " GROUP BY normalized ORDER BY n DESC, last DESC LIMIT ?",
+                (args.limit,),
+            )
+            woke = await db.fetchval("SELECT count(*) FROM voice_turns WHERE woke = 1")
+            missed = await db.fetchval("SELECT count(*) FROM voice_turns WHERE woke = 0")
+            await db.close()
+            return rows, woke, missed
+
+        rows, woke, missed = asyncio.run(go())
+        print(f"Wake word: {s.assistant_name!r}"
+              + (f"   aliases: {s.wake_aliases}" if s.wake_aliases else ""))
+        print(f"Woke {woke} time(s); {missed} utterance(s) did not.\n")
+        if not rows:
+            print("Nothing recorded yet.")
+            return 0
+        print("Heard but ignored -- add real mishearings to WAKE_ALIASES:\n")
+        for r in rows:
+            print(f"  {r['n']:>3}x  {r['normalized'][:68]}")
         return 0
 
     if args.cmd == "review":

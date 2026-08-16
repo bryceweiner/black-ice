@@ -54,23 +54,44 @@ class VoiceGateway(ABC):
 
     # --- wake word ---------------------------------------------------------
 
-    def is_addressed(self, text: str) -> bool:
-        """Wake word, or a follow-up inside the conversation window.
+    def wake_terms(self) -> list[str]:
+        """The assistant's name plus any configured mishearings.
 
-        ASR mishears short names, so match on a normalised word boundary rather
-        than an exact string.
+        Small ASR models mangle names -- `small.en` renders "Edith" as "Eat
+        it", "Eda", "Ace". Fuzzy matching cannot fix this: "eat it" and "with"
+        both score 0.60 against "edith", so any threshold loose enough to catch
+        the mishearing also fires on an ordinary word. Explicit aliases are
+        exact, so they cost nothing in false wakes.
         """
-        name = normalize(get_settings().assistant_name).lower()
-        if name and name in _words(text.lower()):
-            return True
+        s = get_settings()
+        terms = [normalize(s.assistant_name).lower()]
+        terms += [
+            normalize(alias).lower()
+            for alias in s.wake_aliases.split(",")
+            if alias.strip()
+        ]
+        return [t for t in terms if t]
+
+    def is_addressed(self, text: str) -> bool:
+        """Wake word, or a follow-up inside the conversation window."""
+        lowered = text.lower()
+        words = _words(lowered)
+        for term in self.wake_terms():
+            # Single words match on a boundary; multi-word aliases ("eat it")
+            # have to be matched as a phrase.
+            if (term in words) if " " not in term else (term in lowered):
+                return True
         return (time.monotonic() - self._last_reply_at) < FOLLOW_UP_WINDOW_S
 
     def strip_wake_word(self, text: str) -> str:
-        name = normalize(get_settings().assistant_name).lower()
-        words = text.split()
-        while words and words[0].lower().strip(",.!?") == name:
-            words.pop(0)
-        return " ".join(words).lstrip(",. ").strip() or text
+        """Remove a leading wake term so the model sees only the request."""
+        stripped = text
+        for term in sorted(self.wake_terms(), key=len, reverse=True):
+            pattern = re.compile(rf"^\W*{re.escape(term)}\b[\s,.!?]*", re.IGNORECASE)
+            if pattern.match(stripped):
+                stripped = pattern.sub("", stripped, count=1)
+                break
+        return stripped.strip() or text
 
     # --- hooks -------------------------------------------------------------
 
@@ -92,6 +113,9 @@ class VoiceGateway(ABC):
             return Heard(transcript, "", False, None)
 
         if not self.is_addressed(normalized):
+            # Silence is correct here, but invisible: without this line a
+            # misheard wake word looks identical to the mic not working.
+            log.info("heard but not addressed to me: %r", normalized[:80])
             await self._log(transcript, normalized, woke=False, reply=None)
             return Heard(transcript, normalized, False, None)
 

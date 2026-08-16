@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # Speak a short filler if the model takes longer than this.
     # 0 disables it.
     voice_filler_delay_s: float = 3.0
+    # Comma-separated mishearings of ASSISTANT_NAME to also treat as the
+    # wake word. Populate from `blackice wake-report`.
+    wake_aliases: str = ""
+    # faster-whisper size. small.en mangles names; medium.en is markedly
+    # better and still fast on Apple silicon.
+    voice_asr_model: str = "small.en"
     # voice2's spacebar interrupt puts the tty in raw mode, which breaks
     # Ctrl-C and console formatting. Barge-in by voice works regardless.
     voice_keyboard_interrupt: bool = False
