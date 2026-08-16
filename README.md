@@ -152,6 +152,3 @@ allow-list of structured fields plus your own conversation, never from
 sensor-supplied strings — otherwise anyone who controls what a camera sees could
 write persistent instructions into the assistant's long-term memory.
 `tests/test_guard.py` and the memory-trust test guard both rules.
-
-## Tests
-
