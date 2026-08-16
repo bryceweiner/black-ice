@@ -1,8 +1,10 @@
 import React, { useCallback, useState } from "react";
-import { Badge, Button } from "reactstrap";
+import { Button } from "reactstrap";
+import { toast } from "react-toastify";
 import { api } from "../api";
 import { useLive } from "../live";
 import ListPage, { useListQuery } from "../ListPage";
+import { Pill } from "../ui";
 
 export default function Alarms() {
   // Alarms carry no timestamp of their own, so the range filter applies to
@@ -19,7 +21,7 @@ export default function Alarms() {
       await api.setAlarmArmed(rule.id, armed);
       state.reload();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     } finally {
       setBusy(null);
     }
@@ -64,7 +66,7 @@ export default function Alarms() {
                   <div>
                     <strong>{r.name}</strong>
                     {r.sensor_name && (
-                      <Badge color="light" className="text-dark ms-2">{r.sensor_name}</Badge>
+                      <span className="ms-2"><Pill color="#38bdf8">{r.sensor_name}</Pill></span>
                     )}
                     <div className="text-muted small">{r.description}</div>
                     {r.updated_at && (

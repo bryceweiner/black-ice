@@ -1,59 +1,75 @@
-import React from "react";
-import { Badge, Table } from "reactstrap";
+// The event log, sortable and paged, with the evidence for a row one click
+// away in the row itself rather than behind a modal.
 
-export const SEVERITY = ["info", "low", "medium", "high", "critical"];
-const TONE = ["secondary", "info", "warning", "danger", "danger"];
+import React, { useEffect, useState } from "react";
+import { Spinner } from "reactstrap";
+import { api } from "../api";
+import { Rows, SeverityBadge, TierBadge } from "../ui";
+import EvidencePanel from "./EvidencePanel";
 
-export function SeverityBadge({ value }) {
-  const i = Math.max(0, Math.min(4, Number(value) || 0));
-  return <Badge color={TONE[i]} className="text-uppercase">{SEVERITY[i]}</Badge>;
-}
+const COLUMNS = [
+  {
+    name: "When",
+    selector: (r) => r.ts,
+    sortable: true,
+    width: "170px",
+    cell: (r) => <span className="small text-muted text-nowrap">{r.ts}</span>,
+  },
+  { name: "Sensor", selector: (r) => r.sensor_id, sortable: true, width: "150px",
+    cell: (r) => <span className="small">{r.sensor_id}</span> },
+  { name: "Kind", selector: (r) => r.kind, sortable: true, width: "120px",
+    cell: (r) => <span className="small">{r.kind}</span> },
+  { name: "Summary", selector: (r) => r.summary, wrap: true, grow: 2 },
+  {
+    name: "Severity",
+    selector: (r) => Number(r.severity) || 0,
+    sortable: true,
+    width: "120px",
+    cell: (r) => <SeverityBadge value={r.severity} />,
+  },
+  {
+    name: "Triage",
+    selector: (r) => r.tier ?? "",
+    sortable: true,
+    width: "210px",
+    cell: (r) => <TierBadge tier={r.tier} verdict={r.verdict} />,
+  },
+];
 
-export function TierBadge({ tier, verdict }) {
-  if (!tier) return <span className="text-muted small">pending</span>;
-  const tone = tier === "rules" ? "light" : tier === "small_model" ? "info" : "primary";
+// The list query returns columns, not media -- the captures come from the
+// per-event endpoint, so expanding a row fetches it.
+function Expanded({ data }) {
+  const [event, setEvent] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.event(data.id)
+      .then((e) => !cancelled && setEvent(e))
+      .catch((e) => !cancelled && setError(e.message));
+    return () => { cancelled = true; };
+  }, [data.id]);
+
   return (
-    <>
-      <Badge color={tone} className={tone === "light" ? "text-dark" : ""}>{tier}</Badge>
-      {verdict && <span className="text-muted small ms-2">{verdict}</span>}
-    </>
+    <div className="px-4 py-3 border-top">
+      {error ? (
+        <div className="text-danger small">{error}</div>
+      ) : event ? (
+        <EvidencePanel event={event} />
+      ) : (
+        <Spinner size="sm" className="text-muted" />
+      )}
+    </div>
   );
 }
 
-export default function EventTable({ rows, onSelect }) {
-  if (!rows?.length) {
-    return <div className="text-muted text-center py-4">No events match these filters.</div>;
-  }
+export default function EventTable({ rows }) {
   return (
-    <div className="table-responsive">
-      <Table hover className="align-middle mb-0">
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Sensor</th>
-            <th>Kind</th>
-            <th>Summary</th>
-            <th>Severity</th>
-            <th>Triage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              onClick={() => onSelect?.(r)}
-              style={onSelect ? { cursor: "pointer" } : undefined}
-            >
-              <td className="text-nowrap small text-muted">{r.ts}</td>
-              <td className="small">{r.sensor_id}</td>
-              <td className="small">{r.kind}</td>
-              <td>{r.summary}</td>
-              <td><SeverityBadge value={r.severity} /></td>
-              <td><TierBadge tier={r.tier} verdict={r.verdict} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    </div>
+    <Rows
+      columns={COLUMNS}
+      rows={rows ?? []}
+      expandable={Expanded}
+      empty="No events match these filters."
+    />
   );
 }

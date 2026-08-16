@@ -1,26 +1,50 @@
 import React, { useCallback, useState } from "react";
 import {
-  Badge, Button, ButtonGroup, Card, CardBody, Col, Input, Modal, ModalBody,
-  ModalHeader, Row, Table,
+  Button, ButtonGroup, Card, CardBody, Col, Input, Modal, ModalBody,
+  ModalHeader, Row,
 } from "reactstrap";
 import { AlertTriangle, CheckCircle, HelpCircle } from "react-feather";
+import { toast } from "react-toastify";
 import { api } from "../api";
 import { useLive } from "../live";
 import ListPage, { useListQuery } from "../ListPage";
+import { Rows, StatusPill, ThreatBadge } from "../ui";
+import { THREAT_ORDER } from "../tokens";
 import EvidencePanel from "./EvidencePanel";
 
-const THREAT_TONE = {
-  benign: "success", low: "info", elevated: "warning",
-  high: "danger", critical: "danger", unknown: "secondary",
-};
-
-export function ThreatBadge({ level }) {
-  return (
-    <Badge color={THREAT_TONE[level] ?? "secondary"} className="text-uppercase">
-      {level}
-    </Badge>
-  );
-}
+const COLUMNS = [
+  {
+    name: "When",
+    selector: (r) => r.ts,
+    sortable: true,
+    width: "170px",
+    cell: (r) => <span className="small text-muted text-nowrap">{r.ts}</span>,
+  },
+  {
+    name: "Threat",
+    // Sorts by severity, not alphabetically: "critical" above "low" is the
+    // whole point of the column.
+    selector: (r) => THREAT_ORDER.indexOf(r.threat_level),
+    sortable: true,
+    width: "130px",
+    cell: (r) => <ThreatBadge level={r.threat_level} />,
+  },
+  { name: "Classification", selector: (r) => r.classification, sortable: true, wrap: true },
+  {
+    name: "Suggested action",
+    selector: (r) => r.suggested_action,
+    wrap: true,
+    grow: 2,
+    cell: (r) => <span className="small text-muted">{r.suggested_action}</span>,
+  },
+  {
+    name: "Status",
+    selector: (r) => r.status,
+    sortable: true,
+    width: "150px",
+    cell: (r) => <StatusPill status={r.status} />,
+  },
+];
 
 export default function Escalations() {
   const fetcher = useCallback((params) => api.escalations(params), []);
@@ -38,31 +62,12 @@ export default function Escalations() {
         subtitle="Events the assistant raised for your attention"
         state={state}
       >
-        {state.rows.length === 0 ? (
-          <div className="text-muted text-center py-4">Nothing needs your attention.</div>
-        ) : (
-          <div className="table-responsive">
-            <Table hover className="align-middle mb-0">
-              <thead>
-                <tr>
-                  <th>When</th><th>Threat</th><th>Classification</th>
-                  <th>Suggested action</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.rows.map((r) => (
-                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => open(r.id)}>
-                    <td className="text-nowrap small text-muted">{r.ts}</td>
-                    <td><ThreatBadge level={r.threat_level} /></td>
-                    <td>{r.classification}</td>
-                    <td className="small text-muted">{r.suggested_action}</td>
-                    <td><Badge color="light" className="text-dark">{r.status}</Badge></td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          </div>
-        )}
+        <Rows
+          columns={COLUMNS}
+          rows={state.rows}
+          onRowClick={(r) => open(r.id)}
+          empty="Nothing needs your attention."
+        />
       </ListPage>
 
       <Modal isOpen={Boolean(detail)} toggle={() => setDetail(null)} size="lg" scrollable>
@@ -97,7 +102,7 @@ function EscalationDetail({ detail, onChange }) {
       setNote("");
       await onChange();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     } finally {
       setBusy(false);
     }
@@ -132,7 +137,7 @@ function EscalationDetail({ detail, onChange }) {
               <Button
                 key={s}
                 outline={detail.status !== s}
-                color="secondary"
+                color="primary"
                 onClick={() => api.setEscalationStatus(detail.id, s).then(onChange)}
               >
                 {s}

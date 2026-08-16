@@ -5,15 +5,18 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Badge, Button, Collapse, Input, Modal, ModalBody, ModalFooter, ModalHeader,
 } from "reactstrap";
+import Swal from "sweetalert2";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronRight, Folder, Plus, Trash2, X } from "react-feather";
+import { toast } from "react-toastify";
 import { api } from "../api";
+import { Pill } from "../ui";
+import { SENSOR_STATE } from "../tokens";
 import { useLive } from "../live";
 import ListPage, { useListQuery } from "../ListPage";
 
 export function StateBadge({ state }) {
-  const tone = { online: "success", offline: "danger", unknown: "secondary" }[state] ?? "secondary";
-  return <Badge color={tone} pill className="text-uppercase small">{state}</Badge>;
+  return <Pill color={SENSOR_STATE[state] ?? SENSOR_STATE.unknown}>{String(state).toUpperCase()}</Pill>;
 }
 
 export default function Sensors() {
@@ -40,7 +43,7 @@ export default function Sensors() {
       setNewGroup("");
       loadGroups();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   };
 
@@ -87,7 +90,7 @@ export default function Sensors() {
                   {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                   <Folder size={14} className="mx-2" />
                   {g.name}
-                  <Badge color="light" className="text-dark ms-2">{members.length}</Badge>
+                  <span className="text-muted small ms-2">{members.length}</span>
                 </span>
                 <span onClick={(e) => e.stopPropagation()}>
                   <Button size="sm" color="link" onClick={() => setAssigning(g)}>
@@ -97,7 +100,7 @@ export default function Sensors() {
                     size="sm"
                     color="link"
                     className="text-danger"
-                    onClick={() => api.deleteGroup(g.id).then(loadGroups)}
+                    onClick={() => confirmDeleteGroup(g, loadGroups)}
                   >
                     <Trash2 size={14} />
                   </Button>
@@ -147,6 +150,30 @@ export default function Sensors() {
       </Modal>
     </>
   );
+}
+
+// Deleting a group is one click next to a chevron, and it takes the grouping
+// with it. Ask first.
+async function confirmDeleteGroup(group, done) {
+  const { isConfirmed } = await Swal.fire({
+    title: `Delete "${group.name}"?`,
+    text: "The sensors stay; only the grouping is removed.",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Delete group",
+    confirmButtonColor: "#f43f5e",
+    cancelButtonColor: "#334155",
+    background: "#131a22",
+    color: "#e9f1f8",
+  });
+  if (!isConfirmed) return;
+  try {
+    await api.deleteGroup(group.id);
+    done();
+  } catch (e) {
+    Swal.fire({ icon: "error", title: "Could not delete", text: e.message,
+                background: "#131a22", color: "#e9f1f8" });
+  }
 }
 
 function SensorRows({ rows, onRemove }) {

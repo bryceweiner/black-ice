@@ -4,7 +4,7 @@
 
 import React from "react";
 import { Alert, Badge, Table } from "reactstrap";
-import { SeverityBadge, TierBadge } from "./EventTable";
+import { SeverityBadge, TierBadge } from "../ui";
 
 function Media({ item }) {
   const src = `/media/${item.path}`;

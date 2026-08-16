@@ -10,6 +10,7 @@ import { CSSTransition, TransitionGroup } from "react-transition-group";
 import { LiveProvider } from "./blackice/live";
 import ThemeBoot from "./blackice/ThemeBoot";
 import Console from "./blackice/Console";
+import EscalationAlerts from "./blackice/alerts";
 
 const App = ({ assistant = "Ice", username = "admin" }) => {
   const animation = localStorage.getItem("animation") || ConfigDB.data.router_animation || "fade";
@@ -24,6 +25,7 @@ const App = ({ assistant = "Ice", username = "admin" }) => {
   return (
     <LiveProvider>
       <ThemeBoot />
+      <EscalationAlerts />
       <Loader />
       <div className="page-wrapper">
         <div className="page-body-wrapper">

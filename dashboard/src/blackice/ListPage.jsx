@@ -112,7 +112,7 @@ export function ListToolbar({ state, placeholder = "Search…", children }) {
         {children}
         <button
           type="button"
-          className="btn btn-outline-secondary btn-sm"
+          className="btn btn-outline-primary btn-sm"
           onClick={reload}
           aria-label="Refresh"
         >
