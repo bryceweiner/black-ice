@@ -301,3 +301,63 @@ async def test_a_held_edit_never_activates_then_rolls_back_cleanly(live, monkeyp
     restored = await promptstore.rollback("triage")
     assert restored["author"] == "human"
     assert (await promptstore.active("triage"))["id"] == original["id"]
+
+
+# --- the memory loop, end to end -------------------------------------------
+
+async def test_a_verdict_changes_what_triage_is_told_next_time(live, monkeypatch):
+    """Closes the loop with the real kokoro library: a verdict becomes a fact,
+    the fact comes back as precedent, and the precedent reaches the model."""
+    import importlib
+
+    import kokoro_memory
+
+    from blackice.memory.store import MemoryStore
+    from blackice.triage.pipeline import _with_precedent
+
+    monkeypatch.setenv("KOKORO_MEMORY_ROOT", str(get_settings().data_dir / "memory"))
+    km = importlib.reload(kokoro_memory)
+    store = MemoryStore()
+    store._km, store._tried = km, True
+    monkeypatch.setattr("blackice.rsi.feedback.memory", store)
+
+    await db.execute(
+        "INSERT INTO sensors (id, plugin, name) VALUES ('cam.garden','rtsp','Garden')"
+    )
+    event = await _event("Cat crossing the garden at 02:10", 2, "animal")
+    await db.execute("UPDATE events SET sensor_id='cam.garden' WHERE id=?", (event["id"],))
+    esc = await db.execute(
+        """INSERT INTO escalations (event_id, threat_level, classification,
+                                    reasoning, suggested_action)
+           VALUES (?, 'high', 'Possible intruder', 'movement at night', 'check')""",
+        (event["id"],),
+    )
+    await escalations.record_verdict(esc, "false_positive", "that is next door's cat")
+
+    # A later event of the same shape must arrive at the model with the verdict.
+    later = await _event("Cat crossing the garden at 01:55", 2, "animal")
+    later["sensor_id"] = "cam.garden"
+    body = await _with_precedent(later)
+
+    print(f"\n  precedent block present: {'has said about this sensor' in body}")
+    assert "has said about this sensor before" in body, body[-400:]
+    assert "cat" in body.lower()
+
+    # And the model actually uses it: the same event now reads as benign.
+    message = await live.chat(
+        [
+            {"role": "system", "content": await __import__(
+                "blackice.llm.prompts", fromlist=["active"]).active("triage")},
+            {"role": "user", "content": body},
+        ],
+        model=get_settings().model_primary, temperature=0.0,
+        response_format=__import__(
+            "blackice.llm.client", fromlist=["json_schema_format"]
+        ).json_schema_format("classification", __import__(
+            "blackice.triage.pipeline", fromlist=["CLASSIFICATION_SCHEMA"]
+        ).CLASSIFICATION_SCHEMA),
+    )
+    level = __import__("blackice.llm.client", fromlist=["extract_json"]).extract_json(
+        message).get("threat_level")
+    print(f"  classified with precedent: {level}")
+    assert level in ("benign", "low"), f"precedent was ignored: {level}"

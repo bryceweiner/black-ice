@@ -276,3 +276,78 @@ async def test_the_model_sees_the_verdicts_and_its_own_prompts(seeded):
     assert "the postman again" in body
     assert "Current prompt: system" in body
     assert "Current prompt: triage" in body
+
+
+# --- the scheduler ---------------------------------------------------------
+
+async def test_consolidation_runs_on_its_own_schedule(seeded, monkeypatch):
+    """It was only reachable via `blackice consolidate`, so a running system
+    never consolidated anything."""
+    from blackice import jobs
+    from blackice.rsi.scheduler import MEMORY_JOB, ReviewScheduler
+
+    calls = []
+    monkeypatch.setattr(
+        "blackice.rsi.scheduler.consolidate.consolidate_all",
+        lambda hours: _record(calls, hours),
+    )
+    sched = ReviewScheduler()
+
+    assert await jobs.due(MEMORY_JOB, 6) is True
+    await sched._consolidate_memory()
+    assert calls, "consolidation never ran"
+
+    # Marked, so a restart does not repeat it.
+    assert await jobs.due(MEMORY_JOB, 6) is False
+    await sched._consolidate_memory()
+    assert len(calls) == 1
+
+
+async def _record(calls, hours):
+    calls.append(hours)
+    return {"enabled": True, "event_facts": 2}
+
+
+async def test_consolidation_is_skipped_when_memory_is_off(seeded, monkeypatch):
+    from blackice.config import get_settings
+    from blackice.rsi.scheduler import ReviewScheduler
+
+    calls = []
+    monkeypatch.setattr(
+        "blackice.rsi.scheduler.consolidate.consolidate_all",
+        lambda hours: _record(calls, hours),
+    )
+    monkeypatch.setenv("MEMORY_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        await ReviewScheduler()._consolidate_memory()
+        assert calls == []
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_one_failing_job_does_not_stop_the_other(seeded, monkeypatch):
+    """Consolidation and the review share a loop; a raise in one must not
+    silence the other."""
+    import asyncio
+
+    from blackice.rsi.scheduler import ReviewScheduler
+
+    ran = []
+    sched = ReviewScheduler()
+
+    async def boom():
+        raise RuntimeError("consolidation exploded")
+
+    async def ok():
+        ran.append("review")
+
+    sched._consolidate_memory = boom
+    sched._run_review = ok
+    monkeypatch.setattr("blackice.rsi.scheduler.STARTUP_GRACE_S", 0)
+    monkeypatch.setattr("blackice.rsi.scheduler.CHECK_INTERVAL_S", 0.05)
+
+    task = asyncio.create_task(sched._loop())
+    await asyncio.sleep(0.15)
+    task.cancel()
+    assert "review" in ran

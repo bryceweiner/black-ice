@@ -49,6 +49,8 @@ class Settings(BaseSettings):
 
     memory_enabled: bool = True
     kokoro_memory_root: Path = Path("data/memory")
+    # How often conversation and event patterns become durable facts.
+    memory_consolidate_hours: float = 6.0
 
     rsi_feedback_enabled: bool = True
     rsi_proposals_enabled: bool = True

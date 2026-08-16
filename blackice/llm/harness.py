@@ -5,6 +5,7 @@ crash mid-loop still leaves a complete record.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -109,7 +110,9 @@ class Harness:
             history.append(message)
 
             if not calls:
-                return message_text(message)
+                reply = message_text(message)
+                await self._remember(checked.normalized, reply, trust)
+                return reply
 
             for call in calls:
                 result = await self._invoke(session_id, channel, call)
@@ -123,6 +126,18 @@ class Harness:
 
         log.warning("harness hit the %d-iteration cap", MAX_ITERATIONS)
         return "I got stuck working through that. Try asking more specifically."
+
+    async def _remember(self, asked: str, reply: str, trust: Trust) -> None:
+        """Feed the exchange to memory consolidation.
+
+        Here rather than at each call site: console and voice both come through
+        run(), and doing it per-caller means the next channel added silently
+        never gets remembered.
+        """
+        from ..memory import consolidate
+
+        with contextlib.suppress(Exception):
+            await consolidate.record_turn(asked, reply, trust)
 
     async def _invoke(self, session_id: str, channel: str, call: dict) -> Any:
         fn = call.get("function", {})

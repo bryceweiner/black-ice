@@ -60,7 +60,7 @@ a single run.
 | `blackice/llm/` | LM Studio client, `normalize()`, PromptGuard, tool registry, harness loop |
 | `blackice/triage/` | Three tiers: rules → small model → 27B |
 | `blackice/plugins/` | Plugin contract, entry-point discovery, supervisor, per-plugin SQLite |
-| `blackice/memory/`, `blackice/rsi/` | kokoro-memory wrapper and the feedback loop |
+| `blackice/memory/`, `blackice/rsi/` | kokoro-memory wrapper, consolidation, and the feedback loop |
 | `dashboard/src/blackice/` | Pages, widget registry, live socket, console |
 | `plugins/` | First-party plugins, installed with `uv pip install -e` |
 
@@ -123,6 +123,25 @@ function -- its workers look it up as a module attribute, so one substitution
 reaches all of them -- and keeps the JSON-lines latency file it writes. Routine
 per-turn chatter (`floor_set`, `transition`, `speak_entry`) drops to DEBUG;
 `vad_load_error` and friends are ERROR.
+
+## Memory
+
+kokoro-memory holds durable facts under `KOKORO_MEMORY_ROOT`, and every
+operation is mirrored into `memory_ops` for the audit trail. It is wired into
+the loop at four points:
+
+- **Read at the start of a session** -- `build_startup_memory_block()` is
+  appended to the system prompt, once per session.
+- **Read during triage** -- your past verdicts on a sensor and event kind are
+  recalled and shown to both triage tiers as precedent. This is what makes
+  marking something a false positive actually change the next classification.
+- **Written from your verdicts** -- judging an escalation writes a fact.
+- **Written by consolidation** -- conversation turns and structured event
+  patterns become facts every `MEMORY_CONSOLIDATE_HOURS`, scheduled alongside
+  the self-review. `blackice consolidate` runs it on demand.
+
+Turn recording lives in the harness rather than at each call site, so console
+and voice are both covered and a new channel cannot silently miss it.
 
 ## The daily self-review
 

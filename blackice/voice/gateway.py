@@ -20,7 +20,6 @@ from ..llm import guard
 from ..llm.harness import Harness
 from ..llm.harness import harness as default_harness
 from ..llm.normalize import normalize
-from ..memory import consolidate
 from ..models import Trust
 
 log = logging.getLogger("blackice.voice")
@@ -146,7 +145,6 @@ class VoiceGateway(ABC):
                 )
             finally:
                 self.on_thinking_end()
-            await consolidate.record_turn(spoken, reply, Trust.USER)
 
         self._last_reply_at = time.monotonic()
         await self._log(transcript, normalized, woke=True, reply=reply,

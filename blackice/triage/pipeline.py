@@ -68,6 +68,36 @@ def _describe(event: dict[str, Any]) -> str:
     return text
 
 
+async def _with_precedent(event: dict[str, Any]) -> str:
+    """The event description, plus what the owner has previously said about
+    this sensor and event kind.
+
+    This is the read half of the feedback loop. Verdicts were being written to
+    memory and never consulted, which made "the system learns from you" true
+    only in the sense that it wrote things down.
+    """
+    described = _describe(event)
+    try:
+        from ..rsi.feedback import precedent
+
+        prior = await precedent(event["sensor_id"], event["kind"])
+    except Exception:
+        log.exception("could not recall precedent for %s", event["sensor_id"])
+        return described
+    if not prior:
+        return described
+
+    s = get_settings()
+    lines = "\n".join(f"- {p}" for p in prior)
+    # Owner-derived, so it is instruction rather than evidence -- unlike
+    # sensor_text, which _describe() wraps as untrusted.
+    return (
+        f"{described}\n\n"
+        f"## What {s.owner_name} has said about this sensor before\n{lines}\n"
+        "Weigh this: it is their judgement on earlier events from this sensor."
+    )
+
+
 def _images(event: dict[str, Any]) -> list[str]:
     return [
         m["path"] for m in event.get("media", [])
@@ -103,7 +133,7 @@ class TriagePipeline:
             message = await self.client.chat(
                 [
                     {"role": "system", "content": TIER2_PROMPT},
-                    user_message(_describe(event), _images(event)),
+                    user_message(await _with_precedent(event), _images(event)),
                 ],
                 model=s.model_triage, temperature=0.0,
                 # Enough for the word plus punctuation. With thinking left on
@@ -125,7 +155,7 @@ class TriagePipeline:
             message = await self.client.chat(
                 [
                     {"role": "system", "content": await prompts.active(prompts.TRIAGE)},
-                    user_message(_describe(event), _images(event)),
+                    user_message(await _with_precedent(event), _images(event)),
                 ],
                 model=s.model_primary, temperature=0.1,
                 response_format=json_schema_format(
