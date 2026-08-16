@@ -18,11 +18,23 @@ dependencies = [
 
 [project.optional-dependencies]
 guard = ["transformers>=4.48", "torch>=2.6"]
-memory = ["sentence-transformers>=3.4"]
-# voice2 and kokoro-memory are not on PyPI — install from their HF repos:
-#   uv pip install "git+https://huggingface.co/AIIT-Threshold/voice2"
-#   uv pip install "git+https://huggingface.co/AIIT-Threshold/kokoro-memory"
-voice = ["faster-whisper>=1.1", "torch>=2.6", "sounddevice>=0.5"]
+memory = ["kokoro-memory", "sentence-transformers>=3.4"]
+voice = [
+    "voice2",
+    "faster-whisper>=1.1",
+    "torch>=2.6",
+    # Silero VAD imports torchaudio, which voice2 does not declare.
+    "torchaudio>=2.6",
+    "sounddevice>=0.5",
+    # Provides the `piper` CLI voice2 shells out to. No brew formula exists.
+    "piper-tts>=1.7",
+]
+all = ["blackice[guard,memory,voice]"]
+
+# Neither is published to PyPI.
+[tool.uv.sources]
+voice2 = { git = "https://huggingface.co/AIIT-Threshold/voice2" }
+kokoro-memory = { git = "https://huggingface.co/AIIT-Threshold/kokoro-memory" }
 
 [project.scripts]
 blackice = "blackice.cli:main"
