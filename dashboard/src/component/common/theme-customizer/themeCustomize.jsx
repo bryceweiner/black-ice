@@ -5,6 +5,17 @@ import { useDispatch, useSelector } from "react-redux";
 import { toast } from "react-toastify";
 import { XCircle } from "react-feather";
 import { ADD_COLOR, ADD_COSTOMIZER, ADD_LAYOUT, ADD_MIXlAYOUT, ADD_SIDEBAR_TYPES, ROUTER_ANIMATION } from "../../../redux/customizer/CustomizerSlice";
+// The template persists the theme in localStorage, so a browser that ever saw
+// the old purple-on-light default would keep it forever. Bumping this rev
+// clears the stored theme once, letting config.js win again.
+const THEME_REV = "blackice-1";
+if (localStorage.getItem("theme_rev") !== THEME_REV) {
+  ["primary_color", "secondary_color", "color", "layout_version", "mix_layout"].forEach((k) =>
+    localStorage.removeItem(k)
+  );
+  localStorage.setItem("theme_rev", THEME_REV);
+}
+
 const ThemeCustomize = () => {
   const configDB = useSelector((state) => state.customizerSlice.customizer);
   const [showHorizontal, setShowHorizontal] = useState(true);
@@ -38,13 +49,10 @@ const ThemeCustomize = () => {
 
     //set sidebar_type
     document.querySelector(".page-wrapper").className = "page-wrapper " + sidebar_type;
-    // mix_layout type
-    if (mix_layout === "default") {
-      document.body.className = layout_version;
-    } else {
-      document.body.className = mix_layout;
-    }
-    document.body.className = layout_version;
+    // Fall back to the configured version: on a first visit (or straight after
+    // a theme-rev reset) localStorage is empty, and the template used to write
+    // the literal string "null" onto the body here.
+    document.body.className = layout_version || config_layout_version;
 
     if (localStorage.getItem("primary_color") == null || localStorage.getItem("secondary_color") == null || localStorage.getItem("color") == null || localStorage.getItem("layout_version") == null) {
       document.documentElement.className = config_color;

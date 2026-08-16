@@ -1,0 +1,74 @@
+@import "bootstrap-scss/bootstrap.scss";
+@import "color.scss";
+@import "animate/animate";
+@import "pe7-icon.scss";
+@import "ionic-icon.scss";
+@import "themify.scss";
+@import "whether-icon/whether-icon";
+// @import "pe7-icon/dist/dist/pe-icon-7-stroke.min.css";
+
+// @import "../scss/ionic-icon/ionicons-variables";
+@import "fontawesome.scss";
+// @import "font-awesome/css/font-awesome.min.css";
+@import "feather-icon.scss";
+@import "vendors/themify.scss";
+
+
+@import "chartist.scss";
+@import "icofont.scss";
+
+@import "react-calendar/dist/Calendar.css";
+// react-big-calendar redefines $border-color and breaks the build under
+// Dart Sass. Nothing here uses it.
+// @import "react-big-calendar/lib/sass/styles.scss";
+
+// Datepicker
+@import "react-datepicker/dist/react-datepicker.css";
+
+@import "sweetalert2/src/sweetalert2.scss";
+
+//  Drag and Drop
+@import "react-dragula/dist/dragula.css";
+
+//scroll
+@import "react-perfect-scrollbar/dist/css/styles.css";
+@import "../scss/theme/dropzone";
+// Datepicker
+// @import "react-datepicker/dist/react-datepicker.css";
+
+// Typeahead
+@import "react-bootstrap-typeahead/css/Typeahead.css";
+
+// ReactToastify
+@import "react-toastify/dist/ReactToastify.css";
+
+//  ImageCrop
+@import "react-image-crop/dist/ReactCrop.css";
+
+
+// @import "react-input-range/lib/css/index.css";
+
+//  Timeline
+@import "react-vertical-timeline-component/style.min.css";
+
+// chat emoji
+// @import "emoji-mart/css/emoji-mart.css";
+
+// Mde EDitor
+// @import "easymde/dist/easymde.min.css";
+
+// Map
+@import "leaflet/dist/leaflet.css";
+
+//tour
+@import "@sjmc11/tourguidejs/src/scss/tour.scss";
+
+//gallery
+@import "photoswipe/dist/photoswipe.css";
+
+@import "swiper/css";
+@import "swiper/css/pagination";
+@import "swiper/css/navigation";
+@import "swiper/css/grid";
+@import 'swiper/css/effect-fade';
+@import "./style.scss";

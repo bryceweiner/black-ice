@@ -1,0 +1,8 @@
+// Fixed Width Icons
+// -------------------------
+@use "../font-awesome/variables" as*;
+
+.#{$fa-css-prefix}-fw {
+  width: calc(18em / 14);
+  text-align: center;
+}

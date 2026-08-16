@@ -1,6 +1,8 @@
 .env
 .venv/
-data/
+# Anchored: unanchored `data/` also swallowed dashboard/src/data, which kept
+# the customizer config out of the repo and broke a fresh clone's build.
+/data/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -14,7 +16,15 @@ dashboard/dist/
 
 # Vendored theme assets, ~560MB. Restore from the upstream theme package;
 # `npm run dev` needs dashboard/public/assets present.
+#
+# The stylesheets are the exception: Black Ice forks the theme's variables
+# (palette, dark defaults, icon font paths), so they are ours now and have to
+# survive a clone. They are 1.8MB of text. Everything heavy stays out.
 template/
-dashboard/public/
+dashboard/public/assets/images/
+dashboard/public/assets/fonts/
+dashboard/public/assets/video/
+dashboard/public/assets/audio/
+dashboard/public/assets/css/
 
 .DS_Store

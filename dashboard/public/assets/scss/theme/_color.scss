@@ -1,0 +1,42 @@
+/**=====================
+     07. Color CSS Start
+==========================**/
+
+.list-group-item {
+  border: none;
+}
+
+.bottom-color-space {
+  margin-bottom: -30px;
+}
+
+// gradient color
+.default-text {
+  color: $theme-default-color;
+}
+.gradient-primary {
+  background-image: $gradient-primary;
+  color: $white;
+  box-shadow: 2px 12px 26px 3px rgba($primary-color, 0.3);
+}
+.gradient-secondary {
+  background-image: $gradient-secondary;
+  box-shadow: 2px 12px 26px 3px rgba($secondary-color, 0.3);
+  color: $white;
+}
+.gradient-success {
+  background-image: $gradient-success;
+  box-shadow: 2px 12px 26px 3px rgba($success-color, 0.3);
+}
+.gradient-warning {
+  background-image: $gradient-warning;
+  box-shadow: 2px 12px 26px 3px rgba($warning-color, 0.3);
+}
+.gradient-info {
+  background-image: $gradient-info;
+  box-shadow: 2px 12px 26px 3px rgba($info-color, 0.3);
+}
+
+/**=====================
+     07. Color CSS Ends
+==========================**/
