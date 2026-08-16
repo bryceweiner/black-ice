@@ -277,3 +277,12 @@ CREATE TABLE IF NOT EXISTS regression_runs (
     passed              INTEGER NOT NULL DEFAULT 0,
     detail              TEXT
 );
+
+-- Periodic jobs -------------------------------------------------------------
+
+-- Last successful run per job, so a restart neither repeats nor skips a day.
+CREATE TABLE IF NOT EXISTS job_runs (
+    job        TEXT PRIMARY KEY,
+    last_run   TEXT NOT NULL,
+    detail     TEXT
+);

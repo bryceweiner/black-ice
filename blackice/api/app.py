@@ -14,6 +14,7 @@ from ..llm.tools import project_plugin_tools
 from ..llm.tools import registry as tool_registry
 from ..memory import consolidate
 from ..plugins.registry import registry
+from ..rsi.scheduler import scheduler as review_scheduler
 from ..services import events
 from ..triage import pipeline as triage
 from ..voice.voice2_backend import Voice2Backend
@@ -42,6 +43,8 @@ async def lifespan(app: FastAPI):
     if s.memory_enabled and not await consolidate.install_generator():
         log.warning("memory is enabled but kokoro-memory is unavailable")
 
+    await review_scheduler.start()
+
     voice = None
     if s.voice_enabled:
         voice = Voice2Backend()
@@ -50,7 +53,9 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             # Voice is an accessory; the dashboard must still come up without it.
             log.error("voice did not start: %s", exc)
-            voice = None
+            await review_scheduler.start()
+
+    voice = None
 
     log.info(
         "black-ice up: assistant=%s plugins=%s tools=%d voice=%s",
@@ -61,6 +66,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await review_scheduler.stop()
         if voice is not None:
             await voice.stop()
         await registry.stop_all()

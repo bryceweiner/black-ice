@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     rsi_proposals_enabled: bool = True
     rsi_self_edit_enabled: bool = False
     rsi_golden_set_min: int = 50
+    # The daily self-review always runs and records proposals;
+    # rsi_self_edit_enabled decides whether a passing one goes live.
+    rsi_review_enabled: bool = True
+    rsi_review_hours: int = 24
 
     retain_media_days: OptDays = 30
     retain_events_days: OptDays = 365

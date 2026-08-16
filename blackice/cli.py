@@ -24,6 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     voice = sub.add_parser("voice", help="run the voice loop on its own")
     voice.add_argument("--say", help="speak a line and exit")
 
+    rev = sub.add_parser("review", help="run the self-review now")
+    rev.add_argument("--days", type=int, default=7)
+
     consol = sub.add_parser("consolidate", help="run memory consolidation now")
     consol.add_argument("--hours", type=int, default=24)
 
@@ -138,6 +141,29 @@ def main(argv: list[str] | None = None) -> int:
 
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(go())
+        return 0
+
+    if args.cmd == "review":
+        import asyncio
+
+        from . import db
+        from .rsi.review import review
+
+        async def go():
+            await db.connect()
+            out = await review.run(args.days)
+            await db.close()
+            return out
+
+        outcome = asyncio.run(go())
+        print(f"observations: {outcome.get('observations', '')[:400]}")
+        for edit in outcome.get("edits", []):
+            print(f"\n{edit['prompt']}: {edit['status']}"
+                  f" ({edit.get('reason', '')})")
+            if edit.get("diff"):
+                print(edit["diff"][:1500])
+        if not outcome.get("edits"):
+            print("no edits proposed")
         return 0
 
     if args.cmd == "consolidate":
