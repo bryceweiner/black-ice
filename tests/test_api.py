@@ -195,3 +195,55 @@ async def test_tool_and_rest_return_the_same_rows(client, seeded):
     via_rest = client.get("/api/events", params={"q": "person"}).json()
     via_tool = await svc.list_events(q="person")
     assert [r["id"] for r in via_rest["rows"]] == [r["id"] for r in via_tool["rows"]]
+
+
+# --- single-process serving ------------------------------------------------
+
+def test_media_requires_authentication(data_dir):
+    """Captured footage is from inside a home; a bare static mount would hand
+    it to anyone on the LAN."""
+    app = create_app()
+    app.router.lifespan_context = _noop_lifespan
+    (data_dir / "media").mkdir(parents=True, exist_ok=True)
+    (data_dir / "media" / "frame.jpg").write_bytes(b"\xff\xd8\xff")
+
+    with TestClient(app) as anon:
+        assert anon.get("/media/frame.jpg").status_code == 401
+
+
+def test_media_is_served_to_a_signed_in_user(client, data_dir):
+    (data_dir / "media").mkdir(parents=True, exist_ok=True)
+    (data_dir / "media" / "frame.jpg").write_bytes(b"\xff\xd8\xffbody")
+
+    r = client.get("/media/frame.jpg")
+    assert r.status_code == 200
+    assert r.content == b"\xff\xd8\xffbody"
+
+
+async def test_media_rejects_path_traversal(client, data_dir):
+    """`..` must not escape the media root into the database or .env.
+
+    Asserted on the handler as well as over HTTP, because httpx normalises `..`
+    client-side and an HTTP-only check can pass without the guard existing.
+    """
+    (data_dir / "secret.txt").write_text("PASSWORD")
+    (data_dir / "media").mkdir(parents=True, exist_ok=True)
+
+    from fastapi import HTTPException
+
+    from blackice.api.static import media
+
+    for attempt in ["../secret.txt", "../../etc/passwd", "sub/../../secret.txt"]:
+        with pytest.raises(HTTPException) as caught:
+            await media(attempt)
+        assert caught.value.status_code == 404, attempt
+
+    # Over HTTP the status varies -- httpx normalises `../` away client-side, so
+    # the request becomes an unrelated path the SPA answers. What must hold in
+    # every case is that the file's contents never come back.
+    for attempt in ["../secret.txt", "..%2fsecret.txt", "%2e%2e%2fsecret.txt"]:
+        assert b"PASSWORD" not in client.get(f"/media/{attempt}").content, attempt
+
+
+def test_missing_media_is_404_not_500(client, data_dir):
+    assert client.get("/media/nope.jpg").status_code == 404

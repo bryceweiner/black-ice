@@ -19,6 +19,7 @@ from ..triage import pipeline as triage
 from ..voice.voice2_backend import Voice2Backend
 from . import auth
 from .routes import router
+from .static import mount as mount_static
 from .ws import hub, websocket_endpoint
 
 log = logging.getLogger("blackice")
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.add_api_websocket_route("/ws", websocket_endpoint)
+    mount_static(app)  # last: the SPA catch-all must not shadow /api or /ws
     return app
 
 
