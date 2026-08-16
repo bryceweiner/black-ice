@@ -44,6 +44,7 @@ export const api = {
 
   health: () => api.get("/health"),
   plugins: () => api.get("/plugins"),
+  overview: () => api.get("/overview"),
 
   sensors: (params) => api.get("/sensors", params),
   sensor: (id) => api.get(`/sensors/${encodeURIComponent(id)}`),

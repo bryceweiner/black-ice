@@ -247,3 +247,15 @@ async def test_media_rejects_path_traversal(client, data_dir):
 
 def test_missing_media_is_404_not_500(client, data_dir):
     assert client.get("/media/nope.jpg").status_code == 404
+
+
+async def test_overview_needs_a_session(client, seeded):
+    """One round trip for the home screen -- and not an anonymous one."""
+    anon = TestClient(client.app)
+    assert anon.get("/api/overview").status_code == 401
+
+    body = client.get("/api/overview").json()
+
+    assert body["sensors"]["total"] == 2
+    assert body["escalations"]["open"] == 1
+    assert len(body["events"]["histogram"]) == 24

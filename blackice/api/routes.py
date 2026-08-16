@@ -12,7 +12,7 @@ from ..llm.harness import harness
 from ..models import Trust
 from ..plugins.registry import registry
 from ..plugins.supervisor import PluginFailure
-from ..services import alarms, escalations, events, groups, sensors
+from ..services import alarms, escalations, events, groups, overview, sensors
 from ..services.groups import GroupError
 from .auth import require_user
 
@@ -175,3 +175,9 @@ async def chat(message: Annotated[str, Body(embed=True)],
 @router.get("/plugins")
 async def plugin_health():
     return registry.health()
+
+
+@router.get("/overview")
+async def system_overview():
+    """Everything the home screen needs, in one round trip."""
+    return await overview.overview()
