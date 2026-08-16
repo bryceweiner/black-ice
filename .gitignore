@@ -1,0 +1,20 @@
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+node_modules/
+dashboard/dist/
+
+# Vendored theme assets, ~560MB. Restore from the upstream theme package;
+# `npm run dev` needs dashboard/public/assets present.
+template/
+dashboard/public/
+
+.DS_Store

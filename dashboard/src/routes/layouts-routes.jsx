@@ -1,0 +1,15 @@
+import React from "react";
+
+import Sensors from "../blackice/pages/Sensors";
+import Events from "../blackice/pages/Events";
+import Escalations from "../blackice/pages/Escalations";
+import Alarms from "../blackice/pages/Alarms";
+import Plugins from "../blackice/pages/Plugins";
+
+export const routes = [
+  { path: `/sensors`, Component: <Sensors /> },
+  { path: `/events`, Component: <Events /> },
+  { path: `/escalations`, Component: <Escalations /> },
+  { path: `/alarms`, Component: <Alarms /> },
+  { path: `/plugins`, Component: <Plugins /> },
+];
