@@ -26,6 +26,7 @@ from blackice_v380 import (
 )
 from blackice_v380 import audio as v380_audio
 from blackice_v380 import codec as v380_codec
+from blackice_v380 import fleet as v380_fleet
 from blackice_v380 import settings as v380_settings
 from blackice_v380.client import AuthenticationError
 
@@ -1045,6 +1046,136 @@ async def test_talking_to_an_unconfigured_camera_is_refused(quiet_fleet_env):
 
     with pytest.raises(talkback.TalkbackError, match="no password"):
         await fleet.speak("95886601", talkback.from_pcm(silence(100)))
+
+
+# --- reaching the fleet from another plugin --------------------------------
+
+@pytest.fixture(autouse=True)
+def clean_fleet_handle():
+    """The published fleet is process-global; never let it leak between tests."""
+    yield
+    v380_fleet.publish_fleet(None)
+
+
+async def test_the_owning_process_publishes_its_fleet(reg):
+    plugin = reg.supervisors["v380"].plugin
+
+    assert v380_fleet.active_fleet() is plugin.fleet
+    assert await v380_fleet.wait_for_fleet(timeout=1) is plugin.fleet
+
+
+async def test_the_fleet_is_withdrawn_on_stop(reg):
+    await reg.stop_all()
+    assert v380_fleet.active_fleet() is None
+
+
+async def test_a_read_only_process_publishes_nothing(data_dir, monkeypatch):
+    monkeypatch.setenv(v380_settings.ENV_DISCOVERY_ENABLED, "false")
+    monkeypatch.setenv(v380_settings.ENV_RTSP_ENABLED, "false")
+
+    first, second = Registry(), Registry()
+    await first.start_plugin(V380Plugin, events.record)
+    try:
+        owner = first.supervisors["v380"].plugin
+        await second.start_plugin(V380Plugin, events.record)
+
+        # The passenger must not overwrite the owner's fleet with its None.
+        assert v380_fleet.active_fleet() is owner.fleet
+    finally:
+        await second.stop_all()
+        await first.stop_all()
+
+
+async def test_waiting_for_a_fleet_that_never_arrives_returns_none():
+    """The normal answer in the process that does not own the cameras. A
+    consumer should do no work, not treat it as a failure."""
+    assert await v380_fleet.wait_for_fleet(timeout=0.4) is None
+
+
+async def test_listeners_are_told_when_the_fleet_appears_and_goes(quiet_fleet_env):
+    seen: list[object] = []
+    unsubscribe = v380_fleet.on_fleet_change(seen.append)
+
+    # Fires immediately with the current value, so there is no gap between
+    # registering and the state being watched.
+    assert seen == [None]
+
+    fleet = Fleet(v380_settings.load())
+    v380_fleet.publish_fleet(fleet)
+    assert seen[-1] is fleet
+
+    v380_fleet.publish_fleet(None)
+    assert seen[-1] is None
+
+    unsubscribe()
+    v380_fleet.publish_fleet(fleet)
+    assert seen[-1] is None
+
+
+async def test_a_replaced_fleet_is_handed_over(quiet_fleet_env):
+    """A supervisor restart builds a new Fleet. A consumer holding the old one
+    would go quiet without ever failing, so the swap has to be announced."""
+    seen: list[object] = []
+    v380_fleet.on_fleet_change(seen.append)
+
+    first, second = Fleet(v380_settings.load()), Fleet(v380_settings.load())
+    v380_fleet.publish_fleet(first)
+    v380_fleet.publish_fleet(second)
+
+    assert seen[-1] is second
+    assert v380_fleet.active_fleet() is second
+
+
+async def test_republishing_the_same_fleet_does_not_churn_listeners(quiet_fleet_env):
+    seen: list[object] = []
+    v380_fleet.on_fleet_change(seen.append)
+    fleet = Fleet(v380_settings.load())
+
+    v380_fleet.publish_fleet(fleet)
+    v380_fleet.publish_fleet(fleet)
+
+    assert seen == [None, fleet]
+
+
+async def test_a_broken_listener_does_not_stop_the_others(quiet_fleet_env):
+    seen: list[object] = []
+
+    def explode(_):
+        raise RuntimeError("consumer bug")
+
+    v380_fleet.on_fleet_change(explode)
+    v380_fleet.on_fleet_change(seen.append)
+    fleet = Fleet(v380_settings.load())
+    v380_fleet.publish_fleet(fleet)
+
+    assert seen[-1] is fleet
+
+
+async def test_a_consumer_can_subscribe_to_frames_through_the_published_fleet(
+    camera, monkeypatch, tmp_path
+):
+    """The whole point of publishing it: another plugin reaches a camera's
+    frames without importing core services or this plugin's internals."""
+    path = tmp_path / "cameras.json"
+    path.write_text(json.dumps({
+        str(DEVICE_ID): {"password": PASSWORD, "ip": "127.0.0.1", "port": camera.port}
+    }))
+    monkeypatch.setenv(v380_settings.ENV_CAMERAS_FILE, str(path))
+    monkeypatch.setenv(v380_settings.ENV_DISCOVERY_ENABLED, "false")
+    monkeypatch.setenv(v380_settings.ENV_RTSP_ENABLED, "false")
+
+    fleet = Fleet(v380_settings.load())
+    await fleet.start()
+    v380_fleet.publish_fleet(fleet)
+    try:
+        found = await v380_fleet.wait_for_fleet(timeout=2)
+        assert found is fleet
+
+        with found.subscribe(str(DEVICE_ID)) as feed:
+            frame = await asyncio.wait_for(feed.get(), timeout=10)
+        assert frame.payload == keyframe_payload()
+    finally:
+        await fleet.stop()
 
 
 async def test_a_second_process_runs_read_only(data_dir, monkeypatch):

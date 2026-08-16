@@ -40,7 +40,7 @@ from blackice.plugins.base import PluginContext, SensorPlugin
 from . import audio as v380_audio
 from . import settings as settings_mod
 from . import talkback
-from .fleet import CameraState, Fleet, StateChange
+from .fleet import CameraState, Fleet, StateChange, publish_fleet
 from .protocol import IMAGE_MODES, LIGHT_MODES, PTZ_DIRECTIONS
 from .singleton import ProcessLock
 
@@ -135,8 +135,17 @@ class V380Plugin(SensorPlugin):
         self.fleet = Fleet(self.settings, on_state_change=self._queue_state_change)
         self._drain_task = asyncio.create_task(self._drain_loop(), name="v380-events")
         await self.fleet.start()
+        # Published only once it is actually streaming, so a consumer that
+        # receives it can subscribe straight away.
+        publish_fleet(self.fleet)
 
     async def stop(self) -> None:
+        # First, so that consumers stop subscribing to a fleet that is being
+        # torn down. Unconditional: `stop()` runs on failure paths too, and it
+        # is a no-op if we never published.
+        if self.fleet is not None:
+            publish_fleet(None)
+
         if self._drain_task is not None:
             self._drain_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

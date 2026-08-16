@@ -60,16 +60,33 @@ way out, and only while someone is actually watching.
 
 This is the extension point for face recognition, ReID, and anything else that
 wants frames. Subscribers get Annex B access units on a drop-oldest queue, so a
-model that falls behind loses frames instead of stalling the camera:
+model that falls behind loses frames instead of stalling the camera.
+
+`PluginContext` gives a plugin no way to reach another plugin, so this one
+publishes its fleet instead. Ask for it by function — never by reaching through
+the core registry:
 
 ```python
-fleet = registry.supervisors["v380"].plugin.fleet
+from blackice_v380 import wait_for_fleet
+
+# Start order between plugins is not guaranteed, so wait rather than look once.
+fleet = await wait_for_fleet()
+if fleet is None:
+    return          # this process does not own the cameras; do nothing
 
 with fleet.subscribe("95886601", keyframes_only=True) as feed:
     async for frame in feed:
         # frame.payload is Annex B; frame.codec says h264 or h265
         await recognise(frame.payload)
 ```
+
+`active_fleet()` is the non-waiting form. `None` is a normal answer, not an
+error: in the process that did not take the camera lock it is the only answer.
+
+A long-lived consumer should use `on_fleet_change(listener)` rather than hold
+the object, because the supervisor can restart this plugin and build a new
+`Fleet`. It fires immediately with the current value, and returns the function
+that unsubscribes.
 
 Frames are not decoded to images here on purpose: a face recogniser and a gait
 model want different resolutions and cadences, and decoding once centrally

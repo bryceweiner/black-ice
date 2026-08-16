@@ -658,3 +658,83 @@ class Fleet:
         if self.rtsp is None:
             return None
         return f"rtsp://{host}:{self.rtsp.port}/{device_id}"
+
+
+# --- reaching the live fleet from another plugin ---------------------------
+#
+# A recognition plugin needs these frames, and `PluginContext` deliberately
+# hands out no way to reach another plugin — it gives a database, a logger, and
+# `emit`. Rather than have consumers reach through the core registry into this
+# plugin's internals, the V380 plugin publishes its fleet here and consumers ask
+# for it by function.
+#
+# Three facts a consumer has to cope with, which is why this is more than a
+# global variable:
+#
+#   * there may be no fleet at all — in the process that did not take the
+#     camera lock, `active_fleet()` is None for the whole run;
+#   * the fleet may not exist *yet*, because entry-point order does not
+#     guarantee the V380 plugin starts first;
+#   * the fleet can be *replaced*, when the supervisor restarts this plugin.
+#     A consumer holding the old object would go quiet without failing, so
+#     `on_fleet_change` exists to hand over the new one.
+
+_fleet: Fleet | None = None
+_listeners: list[Callable[[Fleet | None], None]] = []
+#: How often `wait_for_fleet` re-checks. Polling rather than an event, because
+#: a module-level asyncio primitive outlives the loop it was created on and
+#: this module is imported once per process but used across many.
+_WAIT_POLL = 0.25
+
+
+def publish_fleet(fleet: Fleet | None) -> None:
+    """Announce the fleet this process owns. Called only by `V380Plugin`."""
+    global _fleet
+    if _fleet is fleet:
+        return
+    _fleet = fleet
+    for listener in list(_listeners):
+        try:
+            listener(fleet)
+        except Exception:
+            log.exception("fleet listener failed")
+
+
+def active_fleet() -> Fleet | None:
+    """The fleet streaming in this process, or None if it is not the owner."""
+    return _fleet
+
+
+async def wait_for_fleet(timeout: float = 30.0) -> Fleet | None:
+    """Wait for the fleet to appear. None if it does not within `timeout`.
+
+    None is a normal answer, not an error: in the process that did not take the
+    camera lock it is the *only* answer, and a consumer should degrade to doing
+    no work rather than treat it as a failure.
+    """
+    deadline = time.monotonic() + timeout
+    while _fleet is None and time.monotonic() < deadline:
+        await asyncio.sleep(_WAIT_POLL)
+    return _fleet
+
+
+def on_fleet_change(
+    listener: Callable[[Fleet | None], None],
+) -> Callable[[], None]:
+    """Be told when the fleet appears, is replaced, or goes away.
+
+    Fires immediately with the current value, so there is no gap between
+    registering and the state you registered to watch. Returns the function
+    that unregisters.
+    """
+    _listeners.append(listener)
+    try:
+        listener(_fleet)
+    except Exception:
+        log.exception("fleet listener failed")
+
+    def unsubscribe() -> None:
+        with contextlib.suppress(ValueError):
+            _listeners.remove(listener)
+
+    return unsubscribe
