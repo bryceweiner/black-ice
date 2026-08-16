@@ -1,0 +1,16 @@
+[project]
+name = "blackice-plugin-findmy"
+version = "0.1.0"
+description = "Black Ice plugin: Find My people, devices and items"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[project.entry-points."blackice.plugins"]
+findmy = "blackice_findmy:FindMyPlugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["blackice_findmy"]

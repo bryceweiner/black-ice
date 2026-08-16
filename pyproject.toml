@@ -29,7 +29,10 @@ voice = [
     # Provides the `piper` CLI voice2 shells out to. No brew formula exists.
     "piper-tts>=1.7",
 ]
-all = ["blackice[guard,memory,voice]"]
+# Lets the Find My plugin ask CoreLocation where this Mac is. Optional: without
+# it the plugin falls back to this Mac's own Find My record.
+location = ["pyobjc-framework-CoreLocation>=10.3; sys_platform == 'darwin'"]
+all = ["blackice[guard,memory,voice,location]"]
 
 # Neither is published to PyPI.
 [tool.uv.sources]

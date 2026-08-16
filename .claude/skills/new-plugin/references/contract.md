@@ -99,7 +99,7 @@ renders a labelled fallback, not a blank panel. Return these shapes from
 | `gallery` | `[{"url": ..., "thumb": ...}, ...]` |
 | `video` | `{"kind": "mjpeg"|"hls"|..., "url": ...}` |
 | `audio` | `{"url": ...}` |
-| `map` | `{"lat": ..., "lon": ..., "label": "..."}` |
+| `map` | `{"lat": ..., "lon": ..., "label": "..."}`, or `{"points": [{"lat", "lon", "label"}, ...]}` for a scatter. Positions are plotted relative to each other — there is no tile layer, by design |
 | `toggle` | `{"armed": bool}` |
 
 `span` is bootstrap columns out of 12 (default 6).

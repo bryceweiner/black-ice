@@ -178,13 +178,62 @@ function AudioWidget({ data, props }) {
   return <audio className="w-100" controls src={src}><track kind="captions" /></audio>;
 }
 
+// Positions plotted against each other, not against the world: there is no
+// tile layer here and there deliberately never will be, because fetching one
+// would tell a map server where the household is. A `points` array gets a
+// scatter with labels; a bare lat/lon still renders as it always did.
 function MapWidget({ data, props }) {
-  const { lat, lon, label } = { ...props, ...data };
-  if (lat == null || lon == null) return <Empty />;
+  const merged = { ...props, ...data };
+  const { lat, lon, label } = merged;
+  const points = (Array.isArray(merged.points) ? merged.points : [])
+    .filter((p) => p && p.lat != null && p.lon != null);
+
+  if (!points.length) {
+    if (lat == null || lon == null) return <Empty />;
+    return (
+      <div className="small">
+        <strong>{label ?? "Location"}</strong>
+        <div className="text-muted">{lat}, {lon}</div>
+      </div>
+    );
+  }
+
+  const lats = points.map((p) => Number(p.lat));
+  const lons = points.map((p) => Number(p.lon));
+  const bounds = {
+    minLat: Math.min(...lats), maxLat: Math.max(...lats),
+    minLon: Math.min(...lons), maxLon: Math.max(...lons),
+  };
+  // A single point — or several at one address — has no extent to scale to.
+  const spanLat = bounds.maxLat - bounds.minLat || 1;
+  const spanLon = bounds.maxLon - bounds.minLon || 1;
+  const place = (p) => ({
+    // 8% padding so a pin on the edge is not half outside the box.
+    left: `${8 + ((Number(p.lon) - bounds.minLon) / spanLon) * 84}%`,
+    top: `${8 + (1 - (Number(p.lat) - bounds.minLat) / spanLat) * 84}%`,
+  });
+
   return (
-    <div className="small">
-      <strong>{label ?? "Location"}</strong>
-      <div className="text-muted">{lat}, {lon}</div>
+    <div
+      className="position-relative rounded"
+      style={{ height: 260, background: CHART.grid, overflow: "hidden" }}
+    >
+      {points.map((p, i) => (
+        <div
+          key={`${p.label ?? i}-${p.lat},${p.lon}`}
+          className="position-absolute d-flex align-items-center gap-1"
+          style={{ ...place(p), transform: "translate(-50%, -50%)" }}
+        >
+          <span
+            className="rounded-circle flex-shrink-0"
+            style={{
+              width: 10, height: 10, display: "inline-block",
+              background: p.label === "Home" ? SENSOR_STATE.unknown : CHART.series,
+            }}
+          />
+          <small className="text-nowrap" style={{ color: CHART.axis }}>{p.label}</small>
+        </div>
+      ))}
     </div>
   );
 }
