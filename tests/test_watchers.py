@@ -20,6 +20,7 @@ import io
 import json
 import time
 import zipfile
+from datetime import datetime
 
 import av
 import numpy as np
@@ -245,6 +246,20 @@ def clean_fleet_handle():
     v380_fleet.publish_fleet(None)
 
 
+def night_window(*, covering_now: bool) -> tuple[str, str]:
+    """A night window that either contains the current hour or misses it.
+
+    Severity and the wording of a summary both depend on the time of day, so a
+    test that does not pin the window passes all afternoon and fails after ten
+    at night. Pinning it against `now` rather than to fixed hours keeps that
+    true in every timezone the suite is run in.
+    """
+    hour = datetime.now().astimezone().hour
+    if covering_now:
+        return str(hour), str((hour + 1) % 24)
+    return str((hour + 2) % 24), str((hour + 3) % 24)
+
+
 @pytest.fixture
 def watcher_env(monkeypatch):
     # No analysis-rate cap and a two-frame bar, so the tests drive the state
@@ -252,6 +267,11 @@ def watcher_env(monkeypatch):
     monkeypatch.setenv(watcher_settings.ENV_ANALYSE_FPS, "1000")
     monkeypatch.setenv(watcher_settings.ENV_MIN_FRAMES, "2")
     monkeypatch.setenv(watcher_settings.ENV_LINGER_SECONDS, "60")
+    # Daytime, whenever the suite happens to run. The night case is exercised
+    # deliberately, by `test_an_unknown_person_at_night_is_worth_more`.
+    start, end = night_window(covering_now=False)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_START, start)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_END, end)
 
 
 @pytest.fixture
@@ -832,8 +852,10 @@ async def test_an_unknown_person_is_reported_and_named_generically(reg):
 
     assert len(rows) == 1
     assert rows[0]["summary"] == "Unrecognised person at Front door"
-    assert rows[0]["severity"] in (SEVERITY_LOW, SEVERITY_MEDIUM)
-    assert json.loads(rows[0]["payload"])["identity"] is None
+    assert rows[0]["severity"] == SEVERITY_LOW
+    payload = json.loads(rows[0]["payload"])
+    assert payload["identity"] is None
+    assert payload["night"] is False
 
 
 async def test_an_unlabelled_camera_is_described_not_named(reg):
@@ -1488,3 +1510,59 @@ async def test_who_was_seen_still_names_a_camera_without_a_fleet(reg):
     assert "has been seen here" in unknown["error"]
     assert LABEL in unknown["error"]
     assert healthy(reg)
+
+
+async def test_an_unknown_person_at_night_is_worth_more(data_dir, watcher_env, monkeypatch):
+    """The same sighting, in the night window: `MEDIUM` rather than `LOW`, and
+    the summary says so. Its own registry because the night window has to be
+    pinned before the plugin reads its settings."""
+    start, end = night_window(covering_now=True)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_START, start)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_END, end)
+
+    reg = Registry()
+    await reg.start_plugin(WatchersPlugin, events.record)
+    try:
+        plugin = plugin_of(reg)
+        recognizer = StubRecognizer(lambda i, s, c: [sighting(1, face=vec(9))])
+        fleet = FakeFleet({DEVICE: LABEL})
+        await attach(plugin, fleet, recognizer)
+
+        await feed(plugin, fleet, DEVICE, encode_annexb(pictures(3)))
+        rows = await wait_events("recognition")
+
+        assert rows[0]["summary"] == "Unrecognised person at Front door at night"
+        assert rows[0]["severity"] == SEVERITY_MEDIUM
+        assert json.loads(rows[0]["payload"])["night"] is True
+    finally:
+        await reg.stop_all()
+
+
+async def test_a_known_person_at_night_is_still_unremarkable(data_dir, watcher_env,
+                                                             monkeypatch):
+    """Night raises the stakes for strangers, not for the household."""
+    start, end = night_window(covering_now=True)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_START, start)
+    monkeypatch.setenv(watcher_settings.ENV_NIGHT_END, end)
+
+    reg = Registry()
+    await reg.start_plugin(WatchersPlugin, events.record)
+    try:
+        plugin = plugin_of(reg)
+        await enrol_directly(plugin, "Jane", face=vec(0))
+        await plugin.gallery.record_sighting(
+            ts=time.time() - 3600, device_id=DEVICE, camera=LABEL, track_id=1,
+            person_id=plugin.gallery.id_of("Jane"), identity="Jane",
+        )
+        recognizer = StubRecognizer(lambda i, s, c: [sighting(2, face=vec(0))])
+        fleet = FakeFleet({DEVICE: LABEL})
+        await attach(plugin, fleet, recognizer)
+
+        await feed(plugin, fleet, DEVICE, encode_annexb(pictures(3)))
+        rows = await wait_events("recognition")
+
+        assert rows[0]["summary"] == "Recognised Jane at Front door"
+        assert rows[0]["severity"] == SEVERITY_INFO
+        assert json.loads(rows[0]["payload"])["night"] is True
+    finally:
+        await reg.stop_all()
