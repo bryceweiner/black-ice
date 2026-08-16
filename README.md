@@ -110,6 +110,13 @@ Setup notes, each of which cost an afternoon:
   on every detected utterance and again when it starts thinking, both of which
   happen before anyone knows the speech was meant for it. `all` restores that,
   `off` leaves only the failure buzz.
+- **It used to answer itself.** The speaker feeds the microphone, so a reply
+  came back as a new utterance; inside the follow-up window that needs no wake
+  word, so it looped. Worse, its own voice tripped barge-in at ~45x the noise
+  baseline and cut each reply off after a word or two. Barge-in is therefore
+  off by default (`VOICE_BARGE_IN`) -- switch it on if you use headphones -- and
+  a transcript matching what was just said is discarded for
+  `VOICE_ECHO_WINDOW_S`.
 - **Spacebar interrupt is off** (`VOICE_KEYBOARD_INTERRUPT`). voice2's keyboard
   worker calls `tty.setraw()`, which clears ISIG so Ctrl-C never becomes SIGINT,
   and OPOST so console output walks diagonally down the screen. Barge-in by

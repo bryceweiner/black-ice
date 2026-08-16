@@ -8,6 +8,7 @@ a separate command grammar.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import time
@@ -27,6 +28,8 @@ log = logging.getLogger("blackice.voice")
 # After answering, keep listening for follow-ups without needing the wake word
 # again -- "Ice, is the garage shut?" / "and the front door?"
 FOLLOW_UP_WINDOW_S = 30.0
+# How alike a transcript must be to what we just said to count as echo.
+ECHO_SIMILARITY = 0.8
 SESSION_ID = "voice"
 
 
@@ -44,6 +47,8 @@ class VoiceGateway(ABC):
     def __init__(self, harness: Harness | None = None) -> None:
         self.harness = harness or default_harness
         self._last_reply_at = 0.0
+        self._last_spoken = ""
+        self._last_spoken_at = 0.0
 
     @abstractmethod
     async def start(self) -> None: ...
@@ -70,6 +75,36 @@ class VoiceGateway(ABC):
             if alias.strip()
         ]
         return [t for t in terms if t]
+
+    def note_spoken(self, text: str) -> None:
+        """Remember what we just said, so we can recognise hearing it back."""
+        self._last_spoken = text or ""
+        self._last_spoken_at = time.monotonic()
+
+    def is_echo(self, text: str) -> bool:
+        """Did the microphone just pick up our own voice?
+
+        The speaker feeds the mic, so a reply gets transcribed as a new
+        utterance. Inside the follow-up window it needs no wake word, so it
+        answers itself and loops -- observed going three rounds, each transcript
+        being the opening words of the previous reply.
+
+        Content matching rather than muting the mic while speaking, because
+        barge-in is a feature and deafness during playback would remove it.
+        """
+        if not self._last_spoken:
+            return False
+        if time.monotonic() - self._last_spoken_at > get_settings().voice_echo_window_s:
+            return False
+
+        heard = " ".join(_words_in_order(text))
+        said = " ".join(_words_in_order(self._last_spoken))
+        if not heard or not said:
+            return False
+        # A fragment of what we said, or near enough to the whole of it.
+        if heard in said:
+            return True
+        return difflib.SequenceMatcher(None, heard, said).ratio() >= ECHO_SIMILARITY
 
     def is_addressed(self, text: str) -> bool:
         """Wake word, or a follow-up inside the conversation window."""
@@ -114,6 +149,12 @@ class VoiceGateway(ABC):
         if not normalized:
             return Heard(transcript, "", False, None)
 
+        if self.is_echo(normalized):
+            log.info("ignoring our own voice back off the speaker: %r",
+                     normalized[:60])
+            await self._log(transcript, normalized, woke=False, reply=None)
+            return Heard(transcript, normalized, False, None)
+
         if not self.is_addressed(normalized):
             # Silence is correct here, but invisible: without this line a
             # misheard wake word looks identical to the mic not working.
@@ -150,7 +191,9 @@ class VoiceGateway(ABC):
         await self._log(transcript, normalized, woke=True, reply=reply,
                         verdict=str(checked.verdict), score=checked.score)
         # The log keeps the model's full text; only the spoken form is flattened.
-        return Heard(transcript, normalized, True, for_speech(reply))
+        spoken_reply = for_speech(reply)
+        self.note_spoken(spoken_reply)
+        return Heard(transcript, normalized, True, spoken_reply)
 
     async def _log(
         self, raw: str, normalized: str, *, woke: bool, reply: str | None,
@@ -167,6 +210,10 @@ class VoiceGateway(ABC):
 
 def _words(text: str) -> set[str]:
     return {w.strip(",.!?;:\"'") for w in text.split()}
+
+
+def _words_in_order(text: str) -> list[str]:
+    return [w for w in (x.strip(",.!?;:\"'").lower() for x in text.split()) if w]
 
 
 _MD_PATTERNS = (

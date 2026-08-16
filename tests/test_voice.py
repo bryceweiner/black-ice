@@ -670,3 +670,117 @@ async def test_acknowledge_fires_only_when_addressed(data_dir, monkeypatch):
 
     await gw.respond("Ice, what is happening")
     assert rung == ["ack"]
+
+
+# --- hearing itself --------------------------------------------------------
+
+async def test_its_own_voice_off_the_speaker_is_ignored(gw):
+    """Observed live: the speaker feeds the microphone, the reply is
+    transcribed as a new utterance, and inside the follow-up window it needs no
+    wake word -- so it answered itself three times running."""
+    await gw.respond("Ice, are you there?")
+    spoken = gw.harness  # the reply was noted by respond()
+
+    # Exactly what the log showed: the opening words of what it just said.
+    gw.note_spoken("I'm here, sir! Is there something specific you'd like me to check?")
+    heard = await gw.respond("I'm here.")
+
+    assert not heard.woke
+    assert heard.reply is None
+    assert spoken is gw.harness
+
+
+async def test_echo_is_ignored_even_inside_the_follow_up_window(gw):
+    """The window is what let the loop sustain: an echo needs no wake word."""
+    await gw.respond("Ice, hello")            # opens the follow-up window
+    gw.note_spoken("Hello again, Bryce! Yes, I am here and ready to help.")
+    assert gw.is_addressed("hello")           # the window would admit it
+    assert not (await gw.respond("Hello.")).woke
+
+
+async def test_a_near_match_counts_as_echo(gw):
+    gw.note_spoken("The garage door is closed.")
+    assert gw.is_echo("the garage door is closed")
+    assert gw.is_echo("The garage door is closed")
+
+
+async def test_unrelated_speech_is_not_treated_as_echo(gw):
+    gw.note_spoken("The garage door is closed.")
+    assert not gw.is_echo("arm the perimeter alarms")
+    assert not gw.is_echo("what time is it")
+
+
+async def test_echo_suppression_expires(gw, monkeypatch):
+    gw.note_spoken("I'm here, sir!")
+    assert gw.is_echo("I'm here")
+    monkeypatch.setattr(
+        "blackice.voice.gateway.time.monotonic",
+        lambda: gw._last_spoken_at + 999,
+    )
+    assert not gw.is_echo("I'm here")
+
+
+async def test_nothing_spoken_yet_is_never_echo(gw):
+    assert not gw.is_echo("anything at all")
+
+
+async def test_the_spoken_form_is_what_gets_remembered(gw):
+    """Markdown is stripped before speaking, so the echo comparison has to be
+    against the spoken text, not the model's original."""
+    gw.harness.client = gw.client = ScriptedClient(reply("**Armed.** the front door"))
+    heard = await gw.respond("Ice, arm the front door")
+    assert "*" not in gw._last_spoken
+    assert gw._last_spoken == heard.reply
+
+
+def test_barge_in_is_off_by_default(monkeypatch):
+    """On open speakers the assistant's own voice trips barge-in at ~45x
+    baseline and cuts its reply off after a word."""
+    from blackice.config import get_settings
+
+    get_settings.cache_clear()
+    cfg = Voice2Backend().build_config()
+    assert cfg.interrupt_vad.threshold > 1.0, "RMS never exceeds 1.0"
+
+
+def test_barge_in_can_be_switched_on(monkeypatch):
+    from blackice.config import get_settings
+
+    monkeypatch.setenv("VOICE_BARGE_IN", "true")
+    get_settings.cache_clear()
+    try:
+        cfg = Voice2Backend().build_config()
+        assert cfg.interrupt_vad.threshold <= 1.0
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_the_feedback_loop_terminates(data_dir, monkeypatch):
+    """The real failure: each reply is picked up by the microphone and answered,
+    which answers itself again. Without suppression it never stops."""
+    from blackice.llm import guard as guard_mod
+    from blackice.llm.harness import Harness
+
+    monkeypatch.setattr(guard_mod.guard_model, "score", lambda t: 0.0)
+
+    class Same:
+        async def chat(self, messages, **kw):
+            return {"role": "assistant",
+                    "content": "I am here, sir! Is there something to check?"}
+
+    async def run(gateway):
+        heard, turns = "Ice, are you there?", 0
+        for _ in range(6):
+            result = await gateway.respond(heard)
+            if not result.woke:
+                return turns
+            turns += 1
+            heard = " ".join(result.reply.split()[:3])   # the mic hears itself
+        return turns
+
+    guarded = Gateway(Harness(ToolRegistry(), Same()))
+    assert await run(guarded) == 1, "the loop did not stop after the first reply"
+
+    unguarded = Gateway(Harness(ToolRegistry(), Same()))
+    unguarded.is_echo = lambda text: False
+    assert await run(unguarded) == 6, "expected the unsuppressed loop to run away"

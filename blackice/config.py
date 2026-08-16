@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     # wake: one chime once the wake word matches (default).
     # all: voice2's chime-at-everything. off: failures only.
     voice_cue_mode: str = "wake"
+    # How long after speaking to treat a matching transcript as our own
+    # voice coming back off the speaker.
+    voice_echo_window_s: float = 20.0
+    # Barge-in. With a laptop speaker beside the microphone the
+    # assistant's own voice trips this at ~45x baseline and cuts itself
+    # off mid-reply; off is the right default without headphones.
+    voice_barge_in: bool = False
     # Voice answers are spoken, so latency matters more than depth.
     # Blank uses MODEL_PRIMARY.
     model_voice: str = ""

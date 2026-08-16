@@ -109,6 +109,11 @@ class Voice2Backend(VoiceGateway):
         # arm the alarms", so it is configurable and much shorter by default.
         cfg.vad.end_silence_ms = s.voice_end_silence_ms
         cfg.asr.model_size = s.voice_asr_model
+        if not s.voice_barge_in:
+            # RMS never exceeds 1.0, so this disables interruption without
+            # patching voice2's worker out of the pipeline.
+            cfg.interrupt_vad.threshold = 10.0
+            cfg.interrupt_vad.energy_multiplier = 1e6
         return cfg
 
     def _ask(self, text: str) -> str:
