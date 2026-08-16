@@ -72,6 +72,17 @@ class VoiceGateway(ABC):
             words.pop(0)
         return " ".join(words).lstrip(",. ").strip() or text
 
+    # --- hooks -------------------------------------------------------------
+
+    def on_thinking_start(self) -> None:  # noqa: B027 - optional hook
+        """Called once the utterance is ours and the model call begins.
+
+        Optional: a gateway with no audio output has nothing to do here.
+        """
+
+    def on_thinking_end(self) -> None:  # noqa: B027 - optional hook
+        """Called when the model returns, successfully or not."""
+
     # --- the one path every utterance takes --------------------------------
 
     async def respond(self, transcript: str) -> Heard:
@@ -94,10 +105,16 @@ class VoiceGateway(ABC):
             )
         else:
             s = get_settings()
-            reply = await self.harness.run(
-                spoken, channel="voice", trust=Trust.USER, session_id=SESSION_ID,
-                model=s.model_voice or None,
-            )
+            # Only around the model call: it is the slow part, and the hooks
+            # must never fire for speech that was not addressed to us.
+            self.on_thinking_start()
+            try:
+                reply = await self.harness.run(
+                    spoken, channel="voice", trust=Trust.USER,
+                    session_id=SESSION_ID, model=s.model_voice or None,
+                )
+            finally:
+                self.on_thinking_end()
             await consolidate.record_turn(spoken, reply, Trust.USER)
 
         self._last_reply_at = time.monotonic()

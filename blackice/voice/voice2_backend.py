@@ -11,7 +11,9 @@ import asyncio
 import contextlib
 import io
 import logging
+import random
 import shutil
+import threading
 from typing import Any
 
 from ..config import get_settings
@@ -22,12 +24,28 @@ log = logging.getLogger("blackice.voice.voice2")
 
 ASK_TIMEOUT_S = 300.0
 
+# Spoken when the model is taking a while, so a pause does not read as "it
+# never heard me". Short, and varied so it does not sound like a recording.
+FILLERS = (
+    "Hang on...",
+    "Just a moment.",
+    "One second.",
+    "Give me a second.",
+    "Let me check that.",
+    "Bear with me.",
+    "This is taking a second.",
+    "Still working on it.",
+    "On it, one sec.",
+)
+
 
 class Voice2Backend(VoiceGateway):
     def __init__(self, harness=None) -> None:
         super().__init__(harness)
         self.engine: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._filler_timer: threading.Timer | None = None
+        self._last_filler: str | None = None
 
     # --- preflight ---------------------------------------------------------
 
@@ -184,6 +202,52 @@ class Voice2Backend(VoiceGateway):
         except Exception:
             return {"running": True}
 
+    # --- "hang on" while the model thinks ----------------------------------
+
+    def _pick_filler(self) -> str:
+        """Random, but never the same one twice running."""
+        choices = [f for f in FILLERS if f != self._last_filler] or list(FILLERS)
+        self._last_filler = random.choice(choices)
+        return self._last_filler
+
+    def on_thinking_start(self) -> None:
+        delay = get_settings().voice_filler_delay_s
+        if delay <= 0 or self.engine is None:
+            return
+        self._filler_timer = threading.Timer(delay, self._speak_filler)
+        self._filler_timer.daemon = True
+        self._filler_timer.start()
+
+    def on_thinking_end(self) -> None:
+        if self._filler_timer is not None:
+            self._filler_timer.cancel()
+            self._filler_timer = None
+
+    def _speak_filler(self) -> None:
+        phrase = self._pick_filler()
+        log.debug("filler: %s", phrase)
+        self._speak_now(phrase, new_turn=False)
+
+    def _speak_now(self, text: str, *, new_turn: bool) -> None:
+        """Push text straight to playback. Safe to call from any thread.
+
+        `new_turn` matters: playback discards anything whose turn id is not the
+        current one. A filler spoken *during* a turn must reuse that turn, or it
+        would bump the counter and get the real answer suppressed as stale.
+        """
+        if self.engine is None or not text.strip():
+            return
+        try:
+            from voice2.logging_util import LatencyTrace
+
+            ctrl = self.engine.ctrl
+            turn_id = ctrl.start_new_turn() if new_turn else ctrl.current_turn()
+            self.engine._playback_worker.submit(
+                text, turn_id, self.engine._tts, LatencyTrace(turn_id)
+            )
+        except Exception:
+            log.exception("could not speak %r", text[:40])
+
     async def say(self, text: str) -> None:
         """Speak without being asked -- used to announce escalations.
 
@@ -192,18 +256,4 @@ class Voice2Backend(VoiceGateway):
         spoken. The playback worker is the only real output path, and voice2
         exposes no public wrapper for it.
         """
-        if self.engine is None or not text.strip():
-            return
-
-        def _speak() -> None:
-            from voice2.logging_util import LatencyTrace
-
-            turn_id = self.engine.ctrl.start_new_turn()
-            self.engine._playback_worker.submit(
-                text, turn_id, self.engine._tts, LatencyTrace(turn_id)
-            )
-
-        try:
-            await asyncio.to_thread(_speak)
-        except Exception:
-            log.exception("announcement failed")
+        await asyncio.to_thread(self._speak_now, text, new_turn=True)
