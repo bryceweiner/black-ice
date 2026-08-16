@@ -7,16 +7,30 @@ Nothing leaves the LAN.
 ## Running it
 
 ```bash
-uv sync                                   # Python 3.13
 cp .env.example .env
-uv run blackice hash-password             # paste into ADMIN_PASSWORD_HASH
-uv run blackice serve                     # http://localhost:8080
-
-cd dashboard && npm install && npm run dev # http://localhost:5173
+uv run blackice hash-password    # paste into ADMIN_PASSWORD_HASH
+./start.sh                       # everything, on http://localhost:8080
 ```
 
-The dashboard dev server proxies `/api`, `/media`, and `/ws` to the backend.
-LM Studio must be serving on `:1234` with the models named in `.env`.
+`start.sh` syncs dependencies, installs local plugins, starts LM Studio if it
+is not already up, builds the dashboard when the bundle is stale, and runs the
+API with voice enabled. One process, one Ctrl-C.
+
+```
+./start.sh --no-voice   dashboard + API only
+./start.sh --dev        Vite dev server on :5173 with hot reload
+./start.sh --rebuild    force a dashboard rebuild
+```
+
+The API serves the built dashboard itself, so `:8080` is the whole thing; the
+Vite server is only for frontend hot reload. Captured media is behind
+`/media/<path>` and requires a session -- it is footage from inside a house, so
+it is never a bare static mount.
+
+**Dependencies live in `pyproject.toml` extras, including the two Hugging Face
+packages.** `uv sync` prunes anything undeclared, so use `uv sync --extra all`
+(what `start.sh` does) or it will quietly uninstall voice2, kokoro-memory and
+piper. Editable plugin installs are pruned the same way.
 
 ## Layout
 
@@ -63,6 +77,10 @@ Setup notes, each of which cost an afternoon:
 - **Latency.** voice2 defaults to 5s of trailing silence before it will answer;
   `VOICE_END_SILENCE_MS` overrides it. `MODEL_VOICE` lets spoken replies use a
   faster model than the dashboard.
+- **Slow replies announce themselves.** If the model takes longer than
+  `VOICE_FILLER_DELAY_S` (3s), a short phrase is spoken so a pause does not read
+  as "it never heard me". It reuses the in-flight turn id -- starting a new one
+  would make the real answer stale and playback would discard it.
 - **Spacebar interrupt is off** (`VOICE_KEYBOARD_INTERRUPT`). voice2's keyboard
   worker calls `tty.setraw()`, which clears ISIG so Ctrl-C never becomes SIGINT,
   and OPOST so console output walks diagonally down the screen. Barge-in by

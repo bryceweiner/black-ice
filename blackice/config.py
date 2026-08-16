@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     assistant_name: str = "Ice"
     owner_name: str = "owner"
+    # Drives how the assistant addresses you: male -> "sir",
+    # female -> "ma'am", anything else -> no honorific.
+    owner_gender: str = ""
+    # Explicit override, for a term the gender mapping will not guess.
+    owner_honorific: str = ""
 
     host: str = "0.0.0.0"
     port: int = 8080
@@ -51,6 +56,9 @@ class Settings(BaseSettings):
     voice_enabled: bool = False
     piper_voice: str = ""
     voice_end_silence_ms: int = 900
+    # Speak a short filler if the model takes longer than this.
+    # 0 disables it.
+    voice_filler_delay_s: float = 3.0
     # voice2's spacebar interrupt puts the tty in raw mode, which breaks
     # Ctrl-C and console formatting. Barge-in by voice works regardless.
     voice_keyboard_interrupt: bool = False
