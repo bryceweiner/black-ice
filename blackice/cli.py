@@ -15,7 +15,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     serve = sub.add_parser("serve", help="run the API server")
-    serve.add_argument("--reload", action="store_true")
+    serve.add_argument("--reload", dest="reload", action="store_true", default=None,
+                       help="restart when source, prompts or plugins change")
+    serve.add_argument("--no-reload", dest="reload", action="store_false",
+                       help="never restart on file changes")
 
     sub.add_parser("hash-password", help="hash a password for ADMIN_PASSWORD_HASH")
     sub.add_parser("initdb", help="create the database and data directories")
@@ -41,12 +44,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "serve":
         import uvicorn
 
+        from . import reload as reload_cfg
+
+        # --reload/--no-reload override AUTO_RELOAD; unset falls back to it.
+        auto = s.auto_reload if args.reload is None else args.reload
+        extra = {}
+        if auto:
+            extra = {
+                "reload": True,
+                "reload_dirs": reload_cfg.watch_dirs(),
+                "reload_includes": list(reload_cfg.INCLUDES),
+                "reload_excludes": list(reload_cfg.EXCLUDES),
+            }
+            print(f"auto-reload: {reload_cfg.describe()}")
+
         uvicorn.run(
             "blackice.api.app:app",
             host=s.host,
             port=s.port,
-            reload=args.reload,
             log_level="info",
+            **extra,
         )
         return 0
 

@@ -32,6 +32,26 @@ packages.** `uv sync` prunes anything undeclared, so use `uv sync --extra all`
 (what `start.sh` does) or it will quietly uninstall voice2, kokoro-memory and
 piper. Editable plugin installs are pruned the same way.
 
+## Auto-reload
+
+`AUTO_RELOAD` (default on) restarts the service when core code, `schema.sql`,
+a `*.prompt*` file, or an installed plugin changes. Plugin sources are resolved
+through `find_spec`, so an editable install is watched where it actually lives
+rather than wherever it was launched from. `data/` is explicitly excluded --
+the SQLite WAL, the rotating log and captured media all change while the
+service runs, and watching them restarts it in a loop.
+
+Two costs worth knowing before leaving it on:
+
+- **A broken save takes monitoring offline.** The reloader survives a syntax
+  error but the app does not; the port stops answering until the file is valid
+  again. It recovers on its own once it is.
+- **With voice on, every save costs ~15-25s of deafness** while Whisper, Silero
+  and Piper reload. The mic is closed for that whole window.
+
+`./start.sh` honours the setting; `blackice serve --no-reload` overrides it for
+a single run.
+
 ## Layout
 
 | Path | What it is |

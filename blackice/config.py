@@ -37,6 +37,9 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
 
+    # Restart when core code, prompts or an installed plugin changes.
+    auto_reload: bool = True
+
     log_level: str = "INFO"
     # Relative paths land in DATA_DIR/logs. Blank disables the file handler.
     log_file: str = "blackice.log"
