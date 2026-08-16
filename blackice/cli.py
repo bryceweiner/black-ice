@@ -87,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         from .llm.tools import registry as tool_registry
         from .plugins.registry import registry
         from .services import events
+        from .voice.announce import Announcer
         from .voice.voice2_backend import Voice2Backend
 
         async def go():
@@ -98,11 +99,16 @@ def main(argv: list[str] | None = None) -> int:
             backend = Voice2Backend()
             await backend.start()
             print(f"{len(tool_registry.tools)} tools available")
+            announcer = None
             try:
                 if args.say:
                     await backend.say(args.say)
                     await asyncio.sleep(5)
                     return
+                # The only process with a speaker, so the only one that can
+                # deliver a reminder when it comes due.
+                announcer = Announcer(backend)
+                await announcer.start()
                 print(f"Listening. Say '{s.assistant_name}' to wake. Ctrl+C to stop.")
 
                 # Two ways out: a real signal, or voice2's raw-mode keyboard
@@ -124,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                     task.cancel()
             finally:
                 print("\nShutting down…")
+                if announcer is not None:
+                    await announcer.stop()
                 await backend.stop()
                 await registry.stop_all()
                 await db.close()

@@ -104,6 +104,20 @@ renders a labelled fallback, not a blank panel. Return these shapes from
 
 `span` is bootstrap columns out of 12 (default 6).
 
+## Speaking unprompted
+
+A plugin cannot speak. It emits an event; something in the voice process turns
+that into speech. Today the only such thing is `blackice/voice/announce.py`,
+which watches for `kind="reminder"` events and announces them — see
+`plugins/blackice-plugin-clock/` for the emitting half.
+
+Two constraints if you add another announcement path. The bus is **in-process**,
+and `blackice serve` and `blackice voice` are separate processes with separate
+buses and separate plugin instances, so a bus subscriber only sees events raised
+on its own side; the shared database is the only thing both can see. And if a
+plugin's scheduler can run in both processes, the plugin must make firing
+exactly-once itself — `ReminderStore.claim` does it with a compare-and-set.
+
 ## Failure handling
 
 `Supervisor` wraps every call: 30s timeout, exception capture, health persisted
