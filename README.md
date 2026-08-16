@@ -61,8 +61,13 @@ a single run.
 | `blackice/triage/` | Three tiers: rules → small model → 27B |
 | `blackice/plugins/` | Plugin contract, entry-point discovery, supervisor, per-plugin SQLite |
 | `blackice/memory/`, `blackice/rsi/` | kokoro-memory wrapper, consolidation, and the feedback loop |
-| `dashboard/src/blackice/` | Pages, widget registry, live socket, console |
+| `dashboard/src/blackice/` | Pages, widget registry, live socket, console, and `tokens.js` -- every colour that carries meaning |
+| `dashboard/public/assets/scss/` | The theme. Forked, so it is in git; the images and fonts beside it are not |
 | `plugins/` | First-party plugins, installed with `uv pip install -e` |
+
+The dashboard opens on `/home`: uptime and throughput, the assistant inline,
+and a live sensor rail, off one `/api/overview` call plus the websocket. It is
+dark by default and makes no external requests -- no CDN fonts, no map tiles.
 
 ## Writing a plugin
 
