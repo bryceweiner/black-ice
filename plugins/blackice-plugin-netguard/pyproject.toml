@@ -1,0 +1,21 @@
+[project]
+name = "blackice-plugin-netguard"
+version = "0.1.0"
+description = "Black Ice network monitoring, intrusion detection, and hardening posture"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[project.optional-dependencies]
+# Live packet capture: rogue DHCP and ARP spoofing seen on the wire rather than
+# inferred from the ARP cache. Only used when the process is also privileged.
+capture = ["scapy>=2.6"]
+
+[project.entry-points."blackice.plugins"]
+netguard = "blackice_netguard:NetguardPlugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["blackice_netguard"]
