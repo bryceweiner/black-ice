@@ -10,15 +10,12 @@
     "@fullcalendar/interaction": "^6.1.15",
     "@fullcalendar/react": "^6.1.15",
     "@fullcalendar/timegrid": "^6.1.15",
-    "@react-google-maps/api": "^2.20.6",
     "@reduxjs/toolkit": "^2.5.1",
     "@sjmc11/tourguidejs": "^0.0.19",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
     "@testing-library/user-event": "^14.6.1",
-    "@types/googlemaps": "^3.43.3",
     "@types/leaflet": "^1.9.16",
-    "@types/markerclustererplus": "^2.1.33",
     "@types/react": "^19.0.8",
     "apexcharts": "^4.4.0",
     "axios": "^1.7.9",
@@ -51,8 +48,6 @@
     "react-dropzone": "^14.3.8",
     "react-feather": "^2.0.10",
     "react-files": "^3.0.3",
-    "react-geocode": "^0.2.3",
-    "react-google-charts": "^5.2.1",
     "react-hook-form": "^7.54.2",
     "react-image-crop": "^11.0.7",
     "react-leaflet": "^5.0.0",
@@ -80,11 +75,11 @@
     "uninstall": "0.0.0",
     "world-map-geojson": "^1.0.2"
   },
- "scripts": {
-  "dev": "vite",
-  "build": "vite build",
-  "preview": "vite preview"
-},
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
   "eslintConfig": {
     "extends": "react-app",
     "plugins": [
